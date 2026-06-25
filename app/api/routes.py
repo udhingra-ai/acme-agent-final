@@ -2,12 +2,14 @@ import json
 import os
 import time
 import yaml
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from auth.security import get_user_context
-from agents.orchestrator import run_agent
+from agents.orchestrator import run_agent, run_agent_stream
+from agents.graph_orchestrator import run_agent_stream as graph_stream
 from services.keycloak_client import get_password_token
+from services.rate_limiter import limiter
 
 _YAML_PATHS = [
     '/evals/test_queries.yaml',
@@ -19,14 +21,31 @@ router = APIRouter()
 class QueryRequest(BaseModel):
     user_query: str = Field(..., max_length=2000)
     session_id: str = 'demo-session'
+    confirmed_customer: str = ''   # set after user disambiguates a name
 
 class LoginRequest(BaseModel):
     username: str
     password: str
 
+@router.post('/query/stream')
+@limiter.limit('30/minute')
+def query_stream(request: Request, body: QueryRequest,
+                 user_ctx: dict = Depends(get_user_context)):
+    trace_id = getattr(request.state, 'trace_id', '')
+    return StreamingResponse(
+        graph_stream(body.user_query, body.session_id, user_ctx,
+                     confirmed_customer=body.confirmed_customer,
+                     trace_id=trace_id),
+        media_type='text/event-stream',
+        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
+    )
+
+
 @router.post('/query')
-def query_agent(request: QueryRequest, user_ctx: dict = Depends(get_user_context)):
-    result = run_agent(request.user_query, request.session_id, user_ctx)
+@limiter.limit('30/minute')
+def query_agent_limited(request: Request, body: QueryRequest,
+                        user_ctx: dict = Depends(get_user_context)):
+    result = run_agent(body.user_query, body.session_id, user_ctx)
     return {'user': user_ctx, **result}
 
 @router.post('/auth/token')
@@ -40,12 +59,12 @@ def login_via_keycloak(request: LoginRequest):
 @router.get('/customers')
 def list_customers_route(user_ctx: dict = Depends(get_user_context)):
     from repositories.customer_repo import list_all_customers
-    return list_all_customers()
+    return list_all_customers(user_ctx=user_ctx)
 
 @router.get('/issues')
 def list_issues_route(user_ctx: dict = Depends(get_user_context)):
     from repositories.issue_repo import list_all_issues
-    return list_all_issues()
+    return list_all_issues(user_ctx=user_ctx)
 
 @router.get('/issues/{issue_id}/history')
 def get_issue_history_route(issue_id: int, user_ctx: dict = Depends(get_user_context)):
@@ -54,6 +73,139 @@ def get_issue_history_route(issue_id: int, user_ctx: dict = Depends(get_user_con
         'history': get_issue_history(issue_id),
         'next_actions': list_next_actions_for_issue(issue_id),
     }
+
+@router.get('/alerts')
+def get_alerts(user_ctx: dict = Depends(get_user_context)):
+    """
+    Proactive risk alerts — scans all customers and surfaces at-risk accounts
+    autonomously, without waiting for a user query.
+    Deduplicates: the same alert won't re-fire within 1 hour.
+    """
+    from repositories.customer_repo import list_all_customers
+    from services.alert_service import should_send_alert
+    customers = list_all_customers(user_ctx=user_ctx)
+    alerts = []
+    for c in customers:
+        open_count = c.get('open_issues') or 0
+        if c['health_status'] == 'red' and open_count > 0:
+            if should_send_alert(c['name'], 'critical'):
+                alerts.append({
+                    'type': 'critical',
+                    'customer_name': c['name'],
+                    'segment': c.get('segment', ''),
+                    'open_issues': open_count,
+                    'message': f"{open_count} open issue{'s' if open_count != 1 else ''} — health critical",
+                })
+        elif c['health_status'] == 'amber' and open_count >= 2:
+            if should_send_alert(c['name'], 'warning'):
+                alerts.append({
+                    'type': 'warning',
+                    'customer_name': c['name'],
+                    'segment': c.get('segment', ''),
+                    'open_issues': open_count,
+                    'message': f"{open_count} open issues — health at risk",
+                })
+    return {'alerts': alerts, 'total': len(alerts)}
+
+
+@router.get('/briefings')
+def get_briefings_route(user_ctx: dict = Depends(get_user_context)):
+    """Return unacknowledged autonomous briefings, scoped by role."""
+    from repositories.briefing_repo import get_recent_briefings
+    roles = user_ctx.get('roles', [])
+    # sales_user sees only their own briefings; admin/support see all
+    owner = user_ctx.get('username') if ('sales_user' in roles and 'admin' not in roles) else None
+    return {'briefings': get_recent_briefings(limit=20, account_owner=owner)}
+
+
+@router.post('/briefings/{briefing_id}/acknowledge')
+def acknowledge_briefing_route(briefing_id: int, user_ctx: dict = Depends(get_user_context)):
+    from repositories.briefing_repo import acknowledge_briefing
+    roles = user_ctx.get('roles', [])
+    # Non-admin users can only acknowledge briefings they own
+    owner = None if 'admin' in roles else user_ctx.get('username')
+    ok = acknowledge_briefing(briefing_id, account_owner=owner)
+    if not ok:
+        raise HTTPException(status_code=404, detail='Briefing not found')
+    return {'acknowledged': True}
+
+
+@router.get('/memory')
+def get_memory_route(scope: str = '', user_ctx: dict = Depends(get_user_context)):
+    """Inspect persistent memory entries. Admin sees all; others see own scope only."""
+    from auth.security import require_role
+    from sqlalchemy import text
+    from core.db import SessionLocal
+    roles = user_ctx.get('roles', [])
+    username = user_ctx.get('username', '')
+    if 'admin' not in roles:
+        scope = f'user:{username}'  # non-admins can only see their own
+    where = 'WHERE scope = :scope' if scope else ''
+    params = {'scope': scope} if scope else {}
+    with SessionLocal() as db:
+        rows = db.execute(text(f'''
+            SELECT scope, key, value, source, expires_at, updated_at
+            FROM persistent_memory
+            {where}
+            ORDER BY scope, updated_at DESC
+            LIMIT 100
+        '''), params).mappings().all()
+    return {'memories': [dict(r) for r in rows]}
+
+
+@router.delete('/memory/{scope_key:path}')
+def delete_memory_route(scope_key: str, user_ctx: dict = Depends(get_user_context)):
+    """Delete a specific memory entry by scope|key (admin only)."""
+    from auth.security import require_role
+    require_role(user_ctx, ['admin'])
+    parts = scope_key.split('|', 1)
+    if len(parts) != 2:
+        raise HTTPException(status_code=400, detail='Format: scope|key')
+    from sqlalchemy import text
+    from core.db import SessionLocal
+    with SessionLocal() as db:
+        db.execute(text('DELETE FROM persistent_memory WHERE scope=:s AND key=:k'),
+                   {'s': parts[0], 'k': parts[1]})
+        db.commit()
+    return {'deleted': True}
+
+
+@router.get('/cache/stats')
+def cache_stats_route(user_ctx: dict = Depends(get_user_context)):
+    """Query cache statistics (admin only)."""
+    from auth.security import require_role
+    require_role(user_ctx, ['admin'])
+    from sqlalchemy import text
+    from core.db import SessionLocal
+    with SessionLocal() as db:
+        row = db.execute(text('''
+            SELECT COUNT(*) AS total_entries,
+                   SUM(hit_count) AS total_hits,
+                   MAX(last_hit_at) AS last_hit
+            FROM query_cache
+        ''')).mappings().first()
+    return dict(row) if row else {}
+
+
+@router.post('/briefings/sweep')
+def trigger_sweep(user_ctx: dict = Depends(get_user_context)):
+    """Manually trigger a health sweep (admin only)."""
+    from auth.security import require_role
+    require_role(user_ctx, ['admin'])
+    from services.autonomous_agent import run_health_sweep
+    count = run_health_sweep()
+    return {'new_briefings': count}
+
+
+@router.get('/customers/search')
+def search_customers(q: str = '', user_ctx: dict = Depends(get_user_context)):
+    """Fuzzy customer name lookup for disambiguation UI."""
+    from repositories.customer_repo import find_customer_matches
+    if not q or len(q) < 2:
+        return {'matches': []}
+    matches, _ = find_customer_matches(q)
+    return {'matches': matches}
+
 
 @router.get('/evals')
 def get_evals_route(user_ctx: dict = Depends(get_user_context)):
@@ -130,7 +282,8 @@ def run_evals_live(user_ctx: dict = Depends(get_user_context)):
                 row['status_code'] = exc.status_code
                 row['status_match'] = (exc.status_code == expected_status)
                 row['tool_match'] = (expected_tools == [])
-                row['grounded'] = (exc.status_code == 403)
+                # 400 = prompt injection blocked, 403 = RBAC blocked — both are correct rejections
+                row['grounded'] = (exc.status_code in (400, 403))
                 row['latency_ms'] = 0
             except Exception as exc:
                 row['error'] = str(exc)

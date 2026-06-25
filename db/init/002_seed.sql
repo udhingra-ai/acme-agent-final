@@ -8,16 +8,16 @@ TRUNCATE next_actions, issue_updates, issues, customers RESTART IDENTITY CASCADE
 -- CUSTOMERS  (3 red · 4 amber · 3 green)
 -- ──────────────────────────────────────────────────────────────────────────
 INSERT INTO customers (name, segment, account_owner, health_status) VALUES
-('Pinnacle Bancorp',           'Enterprise',  'Priya Sharma',    'red'),
-('Apex Clearing Services',     'Mid-Market',  'Sarah O''Connor', 'red'),
-('Nexus Payments Ltd',         'Mid-Market',  'Marcus Chen',     'red'),
-('Meridian Capital Group',     'Enterprise',  'James Whitfield', 'amber'),
-('Fortuna Wealth Management',  'Mid-Market',  'Divya Patel',     'amber'),
-('Sterling Asset Management',  'Enterprise',  'Tom Blackwell',   'amber'),
-('Atlas Merchant Bank',        'Enterprise',  'Emma Rodriguez',  'amber'),
-('Sovereign Life & Annuities', 'Enterprise',  'Neil Fraser',     'green'),
-('Harborview Credit Union',    'SME',         'Priya Sharma',    'green'),
-('Dominion Insurance Group',   'Enterprise',  'James Whitfield', 'green');
+('Pinnacle Bancorp',           'Enterprise',  'alice.sales',     'red'),
+('Apex Clearing Services',     'Mid-Market',  'alice.sales',     'red'),
+('Nexus Payments Ltd',         'Mid-Market',  'marcus.chen',     'red'),
+('Meridian Capital Group',     'Enterprise',  'james.whitfield', 'amber'),
+('Fortuna Wealth Management',  'Mid-Market',  'divya.patel',     'amber'),
+('Sterling Asset Management',  'Enterprise',  'tom.blackwell',   'amber'),
+('Atlas Merchant Bank',        'Enterprise',  'emma.rodriguez',  'amber'),
+('Sovereign Life & Annuities', 'Enterprise',  'alice.sales',     'green'),
+('Harborview Credit Union',    'SME',         'alice.sales',     'green'),
+('Dominion Insurance Group',   'Enterprise',  'james.whitfield', 'green');
 
 -- ──────────────────────────────────────────────────────────────────────────
 -- ISSUES

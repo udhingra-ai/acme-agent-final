@@ -5,11 +5,12 @@ from typing import Any, Dict, List
 from core.config import OPENAI_API_KEY, OPENAI_MODEL
 
 TOOL_DESCRIPTIONS = {
-    'list_all_open_issues':  'List issues across ALL customers. Args: severity (optional: critical/high/medium/low), statuses (optional list: open/in_progress/resolved/waiting — defaults to [open, in_progress]). USE THIS whenever no specific customer is named.',
-    'get_customer_profile':  'Get the profile for ONE named customer. Args: customer_name (string).',
-    'get_open_issues':       'Get all open issues for ONE named customer. Args: customer_name (string).',
-    'get_issue_history':     'Get update history for a specific issue. Args: issue_id (int). Requires get_open_issues first.',
-    'recommend_next_action': 'Create a next action for a specific issue. Args: issue_id (int). Requires get_open_issues first.',
+    'list_all_open_issues':   'List issues across ALL customers. Args: severity (optional: critical/high/medium/low), statuses (optional list: open/in_progress/resolved/waiting — defaults to [open, in_progress]). USE THIS whenever no specific customer is named.',
+    'get_customer_profile':   'Get the profile for ONE named customer. Args: customer_name (string).',
+    'get_open_issues':        'Get all open issues for ONE named customer. Args: customer_name (string).',
+    'get_issue_history':      'Get update history for a specific issue. Args: issue_id (int). Requires get_open_issues first.',
+    'recommend_next_action':  'Create a next action for a specific issue. Args: issue_id (int). Requires get_open_issues first.',
+    'semantic_search_issues': 'Find issues by concept/phrase using semantic vector similarity (RAG). Args: query (string). Use for conceptual queries like "issues similar to rate limiting problems" or "find API timeout issues" when no specific customer is named.',
 }
 
 SYSTEM_PROMPT = """Core planning engine for an enterprise operations assistant (Atlas).
@@ -22,39 +23,48 @@ AVAILABLE TOOLS:
 - get_open_issues(customer_name): single-client open issues
 - get_issue_history: history for one issue (needs issue_id)
 - recommend_next_action: create next action (needs issue_id, admin/support only)
+- semantic_search_issues(query): find issues by concept/phrase using vector similarity — use for conceptual queries like "find issues related to X", "issues mentioning Y", "similar to Z"
 
 DECISION RULES — follow strictly:
 
-RULE 1 — No named client → use list_all_open_issues
-  If the user does NOT mention a specific company/client name, ALWAYS use list_all_open_issues.
+RULE 1 — Semantic/conceptual query (no customer name, searching by concept) → use semantic_search_issues
+  If the user asks to "find", "search", or asks about issues "related to", "similar to", or "mentioning" a concept
+  without naming a specific customer, use semantic_search_issues.
   Set customer_name = "".
-  Examples: "all issues", "critical issues", "what's in progress", "summarise all open work",
-            "which clients are at risk", "show me the portfolio", "in progress and closed".
+  Examples: "find issues related to rate limiting", "search for timeout issues", "issues mentioning SWIFT",
+            "find issues similar to authentication problems".
 
-RULE 2 — Status filtering
+RULE 2 — No named client, portfolio view → use list_all_open_issues
+  If the user asks for a cross-customer list, filtering by status/severity, or portfolio-wide view.
+  Set customer_name = "".
+  Examples: "all issues", "critical issues", "what's in progress", "which clients are at risk".
+
+RULE 3 — Status filtering
   Map user language to statuses array:
   "in progress" / "being worked on" → ["in_progress"]
   "closed" / "resolved" / "done" → ["resolved"]
   "waiting" / "on hold" → ["waiting"]
   "open" → ["open"]
   "all" / "any" / not specified → omit statuses (defaults to open + in_progress)
-  Multiple statuses: e.g. "in progress and closed" → ["in_progress", "resolved"]
 
-RULE 3 — Named client → use per-client tools
+RULE 4 — Named client → use per-client tools in this order
   If user names a specific client (e.g. "Pinnacle Bancorp", "Nexus Payments"):
-  - Always call get_customer_profile first
-  - Add get_open_issues if they ask about issues/status/summary
-  - Add get_issue_history if they ask about history/latest update/summarise
-  - Add recommend_next_action only if they explicitly ask to suggest/create an action
+  Step 1: ALWAYS call get_customer_profile first.
+  Step 2: Add get_open_issues if the query is about issues, status, summary, or open work.
+  Step 3: Add get_issue_history if the query includes "status", "summary", "summarise", "summarize", "latest", "update", "history" — these words mean the user wants to know what has happened recently.
+  Step 4: Add recommend_next_action ONLY if the user explicitly asks to suggest/create/recommend an action.
 
-RULE 4 — Never invent tool names. Never call get_customer_profile with an empty name.
+RULE 5 — Never invent tool names. Never call get_customer_profile with an empty name.
 
 EXAMPLES:
-Q: "summarise issues in progress and closed"
-→ {customer_name:"", steps:[{tool:"list_all_open_issues", args:{statuses:["in_progress","resolved"]}}]}
+Q: "find issues related to rate limiting or API throttling"
+→ {customer_name:"", steps:[{tool:"semantic_search_issues", args:{query:"rate limiting API throttling"}}]}
 
 Q: "list all critical issues across all clients"
 → {customer_name:"", steps:[{tool:"list_all_open_issues", args:{severity:"critical"}}]}
+
+Q: "summarise the latest status for Nexus Payments Ltd"
+→ {customer_name:"Nexus Payments Ltd", steps:[{tool:"get_customer_profile",args:{customer_name:"Nexus Payments Ltd"}},{tool:"get_open_issues",args:{customer_name:"Nexus Payments Ltd"}},{tool:"get_issue_history",args_from:"first_issue_id"}]}
 
 Q: "what is the latest status for Pinnacle Bancorp"
 → {customer_name:"Pinnacle Bancorp", steps:[{tool:"get_customer_profile",args:{customer_name:"Pinnacle Bancorp"}},{tool:"get_open_issues",args:{customer_name:"Pinnacle Bancorp"}},{tool:"get_issue_history",args_from:"first_issue_id"}]}
@@ -62,6 +72,12 @@ Q: "what is the latest status for Pinnacle Bancorp"
 Q: "which clients have high severity open issues"
 → {customer_name:"", steps:[{tool:"list_all_open_issues", args:{severity:"high", statuses:["open"]}}]}
 """
+
+_SEMANTIC_SEARCH_KEYWORDS = [
+    'find issues related to', 'find issues mentioning', 'issues similar to',
+    'issues related to', 'search for issues', 'find issues about',
+    'issues mentioning', 'similar to', 'related to',
+]
 
 _CROSS_CUSTOMER_KEYWORDS = [
     'all clients', 'all customers', 'all accounts', 'across all', 'across clients',
@@ -121,9 +137,25 @@ def infer_customer_name(user_query: str) -> str:
     return ''
 
 
+def _is_semantic_query(query: str) -> bool:
+    lowered = query.lower()
+    return any(kw in lowered for kw in _SEMANTIC_SEARCH_KEYWORDS)
+
+
 def build_rule_plan(user_query: str, user_roles: List[str]) -> Dict[str, Any]:
     lowered = user_query.lower()
     customer_name = infer_customer_name(user_query)
+
+    # Semantic search takes priority when the query is a conceptual search without a named customer
+    if _is_semantic_query(user_query) and not customer_name:
+        return {
+            'customer_name': '',
+            'reasoning': 'Conceptual search query — routing to semantic vector search.',
+            'steps': [{'tool': 'semantic_search_issues', 'args': {'query': user_query}}],
+            'available_tools': TOOL_DESCRIPTIONS,
+            'planner_mode': 'rule_fallback',
+            'roles_seen': user_roles,
+        }
 
     if _is_cross_customer(user_query) or not customer_name:
         severity = _infer_severity(user_query)
@@ -172,7 +204,7 @@ def build_llm_plan(user_query: str, user_roles: List[str]) -> Dict[str, Any]:
     if not OPENAI_API_KEY or OPENAI_API_KEY == 'replace_me':
         raise RuntimeError('OPENAI_API_KEY not configured')
     from openai import OpenAI
-    client = OpenAI(api_key=OPENAI_API_KEY)
+    client = OpenAI(api_key=OPENAI_API_KEY, max_retries=3)
     # Don't pass user_roles to the LLM — RBAC is enforced by the orchestrator,
     # not the planner. Passing roles here causes the LLM to silently filter tools
     # that it shouldn't be making access decisions about.

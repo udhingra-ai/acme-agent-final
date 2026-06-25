@@ -1,15 +1,20 @@
+import json
 import uuid
 from fastapi import HTTPException
 from auth.security import require_role
 from services.tools_registry import TOOL_MAP
 from services.memory_service import append_session_event
-from services.answer_synthesizer import synthesize_answer
+from services.answer_synthesizer import synthesize_answer, synthesize_answer_stream
 from agents.risk_action_agent import run_risk_action_agent, select_primary_issue
 from agents.planner import build_plan
 from observability.logging_utils import log_event
 
 
 def run_agent(user_query: str, session_id: str, user_ctx: dict):
+    # Prompt injection guard — same check as the streaming path
+    from services.prompt_guard import check_prompt
+    check_prompt(user_query)
+
     trace_id = str(uuid.uuid4())[:8]
 
     # ── Agent 1: Planning Agent ───────────────────────────────────────────
@@ -44,7 +49,7 @@ def run_agent(user_query: str, session_id: str, user_ctx: dict):
             args = planned_step.get('args') or {}
             severity = args.get('severity')
             statuses = args.get('statuses')
-            all_issues = TOOL_MAP[tool_name](severity=severity, statuses=statuses)
+            all_issues = TOOL_MAP[tool_name](severity=severity, statuses=statuses, user_ctx=user_ctx)
             steps.append({'tool': tool_name, 'args': args, 'output': all_issues})
 
         elif tool_name == 'get_customer_profile':
@@ -52,7 +57,7 @@ def run_agent(user_query: str, session_id: str, user_ctx: dict):
             steps.append({'tool': tool_name, 'args': {'customer_name': customer_name}, 'output': profile})
 
         elif tool_name == 'get_open_issues':
-            issues = TOOL_MAP[tool_name](customer_name)
+            issues = TOOL_MAP[tool_name](customer_name, user_ctx=user_ctx)
             steps.append({'tool': tool_name, 'args': {'customer_name': customer_name}, 'output': issues})
 
         elif tool_name == 'get_issue_history':
@@ -73,6 +78,11 @@ def run_agent(user_query: str, session_id: str, user_ctx: dict):
                 'args': {'issue_id': primary['id'], 'owner': user_ctx['username']},
                 'output': next_action,
             })
+
+        elif tool_name == 'semantic_search_issues':
+            args = planned_step.get('args') or {}
+            result = TOOL_MAP[tool_name](args.get('query', user_query), user_ctx=user_ctx)
+            steps.append({'tool': tool_name, 'args': args, 'output': result})
 
     # ── Agent 2: Risk/Action Agent (single-customer only) ─────────────────
     # Runs when we have grounded customer data. Produces deterministic risk
@@ -175,3 +185,131 @@ def _rule_based_answer(plan, all_issues, profile, issues, issue_history, risk_ac
         )
 
     return '\n\n'.join(answer_parts) if answer_parts else 'No relevant information found.'
+
+
+def run_agent_stream(user_query: str, session_id: str, user_ctx: dict):
+    """
+    Streaming version of run_agent.
+    Yields SSE events so the client can show progressive agent stages and streamed tokens.
+
+    Event types:
+      planning     — Planning Agent output; includes plan + trace_id
+      tool_result  — one event per tool call as each completes
+      risk_action  — Risk/Action Agent structured output
+      token        — one delta string from the streaming LLM response
+      answer       — full answer text (only emitted when LLM is unavailable; rule-based fallback)
+      error        — HTTP error mid-stream (e.g. 403 on write tool)
+      done         — final event; includes trace_id and user context
+    """
+    trace_id = str(uuid.uuid4())[:8]
+
+    # ── Agent 1: Planning ─────────────────────────────────────────────────
+    try:
+        plan = build_plan(user_query, user_ctx['roles'])
+    except Exception as exc:
+        yield f'data: {json.dumps({"type": "error", "status": 500, "detail": str(exc)})}\n\n'
+        return
+
+    customer_name = plan.get('customer_name', '')
+    log_event('agent_output', {
+        'agent_stage': 'planning_agent',
+        'trace_id': trace_id,
+        'planner_mode': plan.get('planner_mode'),
+        'customer_name': customer_name,
+        'selected_tools': [s.get('tool') for s in plan.get('steps', [])],
+        'role': user_ctx.get('roles', []),
+        'auth_mode': user_ctx.get('auth_mode'),
+    })
+    yield f'data: {json.dumps({"type": "planning", "plan": plan, "trace_id": trace_id}, default=str)}\n\n'
+
+    steps = []
+    profile = None
+    issues = []
+    issue_history = []
+    next_action = None
+    all_issues = []
+
+    # ── Tool Execution ────────────────────────────────────────────────────
+    for planned_step in plan['steps']:
+        tool_name = planned_step['tool']
+        step = None
+
+        try:
+            if tool_name == 'list_all_open_issues':
+                args = planned_step.get('args') or {}
+                all_issues = TOOL_MAP[tool_name](severity=args.get('severity'), statuses=args.get('statuses'))
+                step = {'tool': tool_name, 'args': args, 'output': all_issues}
+
+            elif tool_name == 'get_customer_profile':
+                profile = TOOL_MAP[tool_name](customer_name)
+                step = {'tool': tool_name, 'args': {'customer_name': customer_name}, 'output': profile}
+
+            elif tool_name == 'get_open_issues':
+                issues = TOOL_MAP[tool_name](customer_name)
+                step = {'tool': tool_name, 'args': {'customer_name': customer_name}, 'output': issues}
+
+            elif tool_name == 'get_issue_history':
+                if issues:
+                    primary = select_primary_issue(issues)
+                    issue_history = TOOL_MAP[tool_name](primary['id'])
+                    step = {'tool': tool_name, 'args': {'issue_id': primary['id']}, 'output': issue_history}
+
+            elif tool_name == 'recommend_next_action':
+                require_role(user_ctx, ['support_user', 'admin'])
+                if not issues:
+                    raise HTTPException(status_code=400, detail='No issue available for next action')
+                primary = select_primary_issue(issues)
+                next_action = TOOL_MAP[tool_name](primary['id'], user_ctx['username'])
+                step = {
+                    'tool': tool_name,
+                    'args': {'issue_id': primary['id'], 'owner': user_ctx['username']},
+                    'output': next_action,
+                }
+
+        except HTTPException as exc:
+            yield f'data: {json.dumps({"type": "error", "status": exc.status_code, "detail": exc.detail})}\n\n'
+            return
+
+        if step:
+            steps.append(step)
+            yield f'data: {json.dumps({"type": "tool_result", "step": step}, default=str)}\n\n'
+
+    # ── Agent 2: Risk/Action ──────────────────────────────────────────────
+    risk_action_output = None
+    if issues or profile:
+        risk_action_output = run_risk_action_agent(
+            customer_name, profile or {}, issues, issue_history, trace_id=trace_id
+        )
+        ra_step = {'skill': 'risk_action_agent', 'output': risk_action_output}
+        steps.append(ra_step)
+        yield f'data: {json.dumps({"type": "risk_action", "step": ra_step}, default=str)}\n\n'
+
+    # ── Agent 3: Response — stream tokens ─────────────────────────────────
+    full_answer = ''
+    for token_event in synthesize_answer_stream(
+        user_query, steps,
+        escalation=risk_action_output,
+        next_action=next_action,
+        trace_id=trace_id,
+    ):
+        yield token_event
+        try:
+            d = json.loads(token_event[6:])  # strip 'data: '
+            if d.get('type') == 'token':
+                full_answer += d.get('delta', '')
+        except Exception:
+            pass
+
+    if not full_answer:
+        full_answer = _rule_based_answer(
+            plan, all_issues, profile, issues, issue_history, risk_action_output, next_action
+        )
+        yield f'data: {json.dumps({"type": "answer", "text": full_answer})}\n\n'
+
+    # Persist to Redis session
+    append_session_event(session_id, {
+        'query': user_query, 'plan': plan, 'steps': steps,
+        'answer': full_answer, 'auth_mode': user_ctx.get('auth_mode'), 'trace_id': trace_id,
+    })
+
+    yield f'data: {json.dumps({"type": "done", "trace_id": trace_id, "user": {"username": user_ctx["username"], "roles": user_ctx["roles"], "auth_mode": user_ctx["auth_mode"]}})}\n\n'

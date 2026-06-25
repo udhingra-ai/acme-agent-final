@@ -9,68 +9,102 @@ flowchart TD
     end
 
     subgraph APP_ZONE["🔐 Authenticated application boundary\n(JWT required — validated against Keycloak JWKS)"]
-        NGX[nginx :443\nTLS termination\nself-signed cert]
+        NGX[nginx :443\nTLS termination · rate limiting\nSSE buffering disabled]
         KC[Keycloak :8080\nJWT issuer\nRealm: acme]
-        APP[FastAPI :8000\nJWT validation\nRBAC enforcement]
+        APP[FastAPI :8000\nJWT validation · prompt injection guard\nRBAC enforcement · TraceMiddleware]
 
-        subgraph AGENTS["Bounded 3-Agent Workflow"]
-            PA[Agent 1 — Planning Agent\nOpenAI gpt-4.1-mini → structured plan\nor deterministic rule-based fallback]
-            TE[Tool Execution\norchestrator/app layer\nRBAC enforced here]
-            RA[Agent 2 — Risk/Action Agent\ndeterministic primary-issue selection\nrisk assessment · escalation rubric]
-            RS[Agent 3 — Response Agent\nLLM synthesis or rule-based fallback\nnever invents facts outside tool outputs]
+        subgraph GRAPH["LangGraph ReAct Pipeline\n(pre_flight → think → rbac_gate → execute → risk_assess)"]
+            PF[pre_flight\ncustomer disambiguation\npg_trgm fuzzy match]
+            TH[think\nReAct LLM or rule fallback\npersistent memory injected]
+            RB[rbac_gate\n_WRITE_TOOL_REGISTRY\nwrite tools gated by role]
+            EX[execute\ntool dispatch\nuser_ctx threaded through]
+            RA[risk_assess\ndeterministic risk rubric\nprimary-issue selection]
         end
 
-        MCP[MCP Server :8100\ncanonical tool registry\nGET /customer · /issues · /history · /issues?filters]
-        OBS[Observability\nstructured JSON logs\nagent_output · tool_call · request_trace\ntrace_id threads all 3 agent stages]
+        RS[Response Agent\nLLM token streaming\nor rule-based fallback]
+        MCP[MCP Server :8100\nX-MCP-Secret auth\ncanonical read tool registry]
+        OBS[Observability\nstructured JSON logs\ntrace_id unified HTTP ↔ agent]
+
+        subgraph CACHE["Two-layer Query Cache"]
+            RC[Layer 1: Redis exact\nSHA-256 key · 15 min TTL]
+            VC[Layer 2: pgvector semantic\ncosine similarity > 0.92\nHNSW index m=16]
+        end
+
+        subgraph MEMORY["Cross-session Persistent Memory"]
+            PM[LLM fact extraction\nscope: user / customer\nauto-injected into think prompt]
+        end
+
+        subgraph AUTONOMOUS["Autonomous Agents"]
+            HS[Health sweep\n15 min interval\nchurn signal daily]
+            CDC[CDC listener\npg_notify → psycopg3\nreal-time issue embedding]
+        end
     end
 
     subgraph DATA_ZONE["🗄️ Data boundary"]
-        PG[(PostgreSQL :5432\nacme_ops\ncustomers · issues\nissue_updates · next_actions)]
-        RD[(Redis :6379\nsession history 1 h TTL\nprofile cache 15 min TTL)]
+        PG[(PostgreSQL :5432\ncustomers · issues · issue_updates\nnext_actions · query_cache\npersistent_memory · briefings\nHNSW vector index)]
+        RD[(Redis :6379\nsession history 1 h TTL\nprofile cache 15 min\nexact query cache 15 min\nalert dedup · audit log)]
     end
 
     subgraph EVAL["🧪 Evaluation"]
-        EV[evals/runner.py\n14 test cases\ntool_match · status_match\ngrounded · latency]
+        EV[16 test cases\ntool_match · status_match\ngrounded · latency\nT10: prompt injection → 400]
     end
 
-    U -->|"POST /auth/token\n(username + password)"| KC
+    U -->|"POST /auth/token"| KC
     KC -->|"JWT bearer token"| U
-    U -->|"HTTPS :443\nPOST /query\nAuthorization: Bearer ..."| NGX
-    NGX -->|"HTTP :8000\n(internal Docker network)"| APP
-    APP -->|"validate JWT\nfetch JWKS on first call"| KC
-    APP --> PA
-    PA -->|"structured plan\n{steps, reasoning, mode}"| TE
-    TE -->|"RBAC check before\neach write tool"| TE
-    TE -->|"read tools via MCP\n(3s timeout → direct DB fallback)\nget_customer_profile · get_open_issues\nget_issue_history · list_all_open_issues"| MCP
-    TE -->|"write tools direct DB\n(RBAC enforced before call)\nrecommend_next_action"| PG
-    MCP -->|"canonical definitions\nand read execution"| PG
-    TE -->|"grounded tool outputs"| RA
-    RA -->|"structured output\n{selected_primary_issue, risk_level,\nurgency, rationale, recommendation}"| RS
-    APP --> RD
+    U -->|"HTTPS :443\nPOST /query/stream\nAuthorization: Bearer ..."| NGX
+    NGX -->|"HTTP :8000"| APP
+    APP -->|"validate JWT"| KC
+    APP -->|"trace_id from middleware"| GRAPH
+    APP -->|"cache lookup before graph"| CACHE
+    PF --> TH --> RB --> EX --> TH
+    TH -->|done / max_iter| RA
+    EX -->|"read tools via MCP\n(3s timeout → direct DB fallback)"| MCP
+    EX -->|"write tools direct DB\n(RBAC pre-checked)"| PG
+    MCP --> PG
+    RA --> RS
+    RS -->|"SSE token stream"| U
+    APP --> MEMORY
+    APP --> AUTONOMOUS
+    AUTONOMOUS --> PG
+    CDC --> PG
+    CACHE --> RD
+    CACHE --> PG
+    MEMORY --> PG
     APP --> OBS
-    EV -->|"x-role header\nlocal override"| APP
+    EV -->|"x-role header"| APP
 ```
 
 ---
 
-## Bounded 3-agent workflow
+## LangGraph ReAct pipeline + bounded 3-agent workflow
+
+The orchestrator uses a LangGraph `StateGraph` with a 5-node bounded ReAct loop:
+
+| Node | File | Responsibility |
+|---|---|---|
+| `pre_flight` | `graph_orchestrator.py` | Customer disambiguation (pg_trgm fuzzy match); emits SSE `disambiguation` event if >1 match |
+| `think` | `graph_orchestrator.py` | LLM ReAct reasoning (OpenAI gpt-4.1-mini, max_retries=3) with persistent memory injected; falls back to deterministic rule planner if key absent |
+| `rbac_gate` | `graph_orchestrator.py` | Checks `_WRITE_TOOL_REGISTRY` before any write tool executes; returns 403 if role insufficient |
+| `execute` | `graph_orchestrator.py` | Dispatches tool, passes `user_ctx` for RLS; MCP read path (3s timeout) → direct DB fallback |
+| `risk_assess` | `graph_orchestrator.py` | Deterministic Risk/Action Agent; primary-issue selection; risk rubric; terminates the loop |
+
+Downstream agents:
 
 | Agent | File | Responsibility |
 |---|---|---|
-| Planning Agent | `app/agents/planner.py` | Interprets the user query; decides which tools are needed (cross-customer vs single-customer, history, write); produces structured `{steps, reasoning, planner_mode}` |
-| Risk/Action Agent | `app/agents/risk_action_agent.py` | Consumes grounded tool outputs; selects the primary issue deterministically; applies the risk rubric; produces `{selected_primary_issue, risk_level, urgency, rationale, recommendation}` |
-| Response Agent | `app/services/answer_synthesizer.py` | Consumes Risk/Action Agent output and all tool outputs; synthesises the final user-facing answer via LLM; falls back to deterministic rule-based answer if LLM unavailable; never invents facts |
+| Risk/Action Agent | `app/agents/risk_action_agent.py` | Selects primary issue deterministically; applies risk rubric; produces `{selected_primary_issue, risk_level, urgency, rationale, recommendation}` |
+| Response Agent | `app/services/answer_synthesizer.py` | Streams tokens (SSE) via LLM; falls back to rule-based answer if LLM unavailable; never invents facts |
 
 **What stays centralised — and why:**
 
-- **Tool execution** remains in `orchestrator.py` (app layer). LLMs select tools but never execute them. This keeps RBAC enforcement in one place.
-- **Write-tool RBAC** is enforced in the orchestrator before `recommend_next_action` is called. An adversarial LLM plan cannot bypass this.
-- **Deterministic rule fallback** exists at both the planning and response stages. If OpenAI is unavailable, the system degrades gracefully rather than failing.
+- **Tool execution** is in the `execute` graph node. LLMs select tools but never execute them — RBAC is enforced by `rbac_gate` before every write.
+- **Write-tool RBAC** uses `_WRITE_TOOL_REGISTRY` as single source of truth; a startup assertion verifies all registered tools exist in `TOOL_MAP`.
+- **Deterministic rule fallback** exists at both the planning and response stages. If OpenAI is unavailable, the system degrades gracefully.
 
-**What is intentionally bounded in this prototype:**
+**What is intentionally bounded:**
 
-- Exactly 3 agents — no swarm, no recursive planning loop, no unbounded retries.
-- At most one bounded follow-up decision per query (history fetched for primary issue only).
+- Maximum 6 ReAct iterations per query (`MAX_ITERATIONS = 6`).
+- At most one bounded follow-up (history fetched for primary issue only).
 - All writes remain in the app layer; MCP is read-only.
 
 ---
@@ -80,17 +114,20 @@ flowchart TD
 | Component | Role |
 |---|---|
 | Keycloak | Issues JWT bearer tokens; holds realm roles (`sales_user`, `support_user`, `admin`) |
-| FastAPI app | Accepts queries, validates JWT via JWKS, routes to orchestrator |
-| Planning Agent | Builds a structured tool plan; OpenAI gpt-4.1-mini with rule-based fallback; logs `agent_stage: planning_agent` |
-| Tool Orchestrator | Executes the plan step-by-step; enforces RBAC inline before write tools |
+| FastAPI app | Accepts queries, validates JWT via JWKS; `TraceMiddleware` generates unified `trace_id`; prompt injection guard (15 patterns) blocks before any LLM call |
+| LangGraph orchestrator | 5-node `StateGraph` ReAct loop (`graph_orchestrator.py`); max 6 iterations; compiles once at import, reused per request |
 | Risk/Action Agent | Deterministic primary-issue selection (severity → status → newest); risk rubric; logs `agent_stage: risk_action_agent` |
-| Response Agent | LLM answer synthesis with rule-based fallback; logs `agent_stage: response_agent` |
-| Tool Functions | Thin SQLAlchemy wrappers over PostgreSQL; parameterised queries only |
-| Redis | Short-lived session history (1 h TTL) and customer profile cache (15 min TTL) |
-| MCP Server | Canonical tool registry + 4 read endpoints (`/customer`, `/issues/{name}`, `/history/{issue_id}`, `/issues?filters`) |
-| PostgreSQL | Durable store: customers, issues, issue_updates, next_actions |
-| Observability | Structured JSON to stdout: `agent_output` (with `trace_id`), `tool_call` (with `via`), `request_trace`, `timing` |
-| Evaluation Harness | 14 test cases: tool routing, RBAC, grounding, prompt injection, unknown customer, status filters, MCP paths, history path |
+| Response Agent | LLM token streaming (SSE) with rule-based fallback; logs `agent_stage: response_agent` |
+| Tool Functions | Thin SQLAlchemy wrappers; parameterised queries; `user_ctx` threaded through for RLS |
+| Two-layer Query Cache | Layer 1: Redis exact (SHA-256, 15 min TTL); Layer 2: pgvector semantic (cosine > 0.92, HNSW m=16) |
+| Persistent Memory | LLM extracts cross-session facts post-run; injected into `think` prompt; scoped `user:{name}` / `customer:{name}` |
+| Redis | Session history (1 h), profile cache (15 min), exact query cache, alert dedup, trace steps, audit write log |
+| MCP Server | Canonical read tool registry; `X-MCP-Secret` auth header; 5 endpoints; 3s timeout → direct DB fallback |
+| PostgreSQL | Durable store: customers, issues, issue_updates, next_actions, query_cache, persistent_memory, briefings, health_snapshots |
+| CDC Listener | `psycopg3` LISTEN on `issue_updated` / `issue_note_added`; embeds issues in real-time via OpenAI |
+| Autonomous Agent | Health sweep every 15 min; churn signal daily; writes `briefings` table; deduped at 30 min |
+| Observability | Structured JSON to stdout: `agent_output`, `tool_call`, `request_trace`, `migration_error`; `trace_id` unified HTTP↔agent |
+| Evaluation Harness | 16 test cases: tool routing, RBAC, grounding, prompt injection (T10→400), semantic search, status filters, admin role |
 
 ---
 
@@ -147,7 +184,7 @@ The selected issue is used for `get_issue_history` and `recommend_next_action` c
 | support_user | ✓ | ✓ | ✓ | ✓ | ✓ |
 | admin | ✓ | ✓ | ✓ | ✓ | ✓ |
 
-Enforcement location: `app/agents/orchestrator.py` — `require_role(user_ctx, ['support_user', 'admin'])` called before `recommend_next_action` is dispatched.
+Enforcement location: `app/agents/graph_orchestrator.py` — `_rbac_gate` node checks `_WRITE_TOOL_REGISTRY` before every write tool dispatch; validated at startup by an assertion against `TOOL_MAP`.
 
 ---
 
@@ -174,15 +211,21 @@ Additional outputs: `rationale`, `urgency` (routine / within 48 h / today / imme
 |---|---|---|---|
 | `session:{session_id}` | `{"history":[{query, plan, steps, answer, trace_id},...]}` | 3600 s | Conversation / session memory |
 | `customer:{name_lower}` | `{id, name, segment, account_owner, health_status}` | 900 s | Profile cache — avoids repeated DB reads |
+| `qcache:exact:{sha256}` | `{answer, plan}` | 900 s | Layer-1 exact query cache (SHA-256 of query+roles+customer) |
+| `alert:{customer}:{type}` | `1` | 3600 s | Alert dedup — same alert won't re-fire within 1 hour |
+| `trace:{trace_id}:{node}` | `{delta JSON}` | 3600 s | Per-node trace steps for horizontal scaling / debugging |
+| `audit:write:{trace_id}` | `{tool, user, args, timestamp}` | 86400 s | Immutable write audit log |
 
 ---
 
 ## What would be hardened in production
 
 1. **JWKS caching** — current cache is process-level and never refreshed; production needs background refresh with graceful key rotation
-2. **MCP auth** — MCP server is unauthenticated; production would require mTLS or a shared secret between app and MCP
-3. **Write tools via MCP** — `recommend_next_action` could move to MCP once MCP understands role claims (auth-aware gateway)
+2. **MCP auth** — `X-MCP-Secret` shared secret is in `.env`; production would use mTLS or a secrets manager
+3. **Write tools via MCP** — `recommend_next_action` remains app-layer only; move to MCP only once MCP understands role claims
 4. **Audience validation** — `verify_aud: False` is acceptable for this single-client setup; production with multiple clients needs strict audience checking
-5. **Async tool execution** — sequential tool calls could be parallelised for independent tools (e.g., `get_customer_profile` + `list_all_open_issues`)
-6. **Distributed tracing** — `trace_id` is currently log-only; production would wire it into an OTEL collector
+5. **Async tool execution** — independent tool calls (e.g. `get_customer_profile` + `list_all_open_issues`) could be parallelised
+6. **Distributed tracing** — `trace_id` unified across HTTP and agent; production would export to OTEL/Jaeger
 7. **Session persistence** — Redis TTL means session history is lost after 1 h; production needs durable session storage
+8. **Rate limiter** — Redis-backed slowapi enforces per-user limits across all pods; Redis password auth already configured
+9. **Persistent memory expiry** — 30-day user / 60-day customer TTL; production may want longer retention for key account context

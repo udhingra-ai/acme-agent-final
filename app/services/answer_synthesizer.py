@@ -1,4 +1,5 @@
 import json
+from typing import Generator
 from core.config import OPENAI_API_KEY, OPENAI_MODEL
 from observability.logging_utils import log_event
 
@@ -62,7 +63,7 @@ def synthesize_answer(
 
     try:
         from openai import OpenAI
-        client = OpenAI(api_key=OPENAI_API_KEY)
+        client = OpenAI(api_key=OPENAI_API_KEY, max_retries=3)
         context = _build_context(user_query, tool_outputs, escalation, next_action)
 
         resp = client.chat.completions.create(
@@ -92,3 +93,54 @@ def synthesize_answer(
             'error': str(exc),
         })
         return None
+
+
+def synthesize_answer_stream(
+    user_query: str,
+    tool_outputs: list,
+    escalation: dict | None = None,
+    next_action: dict | None = None,
+    trace_id: str = '',
+) -> Generator[str, None, None]:
+    """
+    Streaming version of synthesize_answer.
+    Yields SSE 'data: {...}\\n\\n' strings with type='token'.
+    Yields nothing on failure — caller falls back to rule-based answer.
+    """
+    if not OPENAI_API_KEY or OPENAI_API_KEY == 'replace_me':
+        return
+
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=OPENAI_API_KEY, max_retries=3)
+        context = _build_context(user_query, tool_outputs, escalation, next_action)
+
+        stream = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            temperature=0,
+            max_tokens=800,
+            stream=True,
+            messages=[
+                {'role': 'system', 'content': _SYSTEM_PROMPT},
+                {'role': 'user', 'content': context},
+            ],
+        )
+
+        for chunk in stream:
+            delta = chunk.choices[0].delta.content or ''
+            if delta:
+                yield f'data: {json.dumps({"type": "token", "delta": delta})}\n\n'
+
+        log_event('agent_output', {
+            'agent_stage': 'response_agent',
+            'trace_id': trace_id,
+            'via': 'llm_stream',
+            'model': OPENAI_MODEL,
+        })
+    except Exception as exc:
+        log_event('agent_output', {
+            'agent_stage': 'response_agent',
+            'trace_id': trace_id,
+            'via': 'rule_fallback',
+            'error': str(exc),
+        })

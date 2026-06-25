@@ -5,6 +5,7 @@ from observability.logging_utils import log_event
 class TraceMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         trace_id = str(uuid.uuid4())
+        request.state.trace_id = trace_id  # expose to route handlers for agent pipeline
         start = time.time()
         response = await call_next(request)
         elapsed_ms = round((time.time() - start) * 1000, 2)
