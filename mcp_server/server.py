@@ -1,10 +1,21 @@
 import os
+import secrets
 from typing import Optional
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Header, HTTPException
 from sqlalchemy import create_engine, text
 
 app = FastAPI(title='Acme MCP Server')
 engine = create_engine(os.getenv('DATABASE_URL', 'postgresql+psycopg://acme:acme@postgres:5432/acme_ops'))
+
+_MCP_SECRET = os.getenv('MCP_SECRET', '')
+
+
+def _check_secret(x_mcp_secret: Optional[str] = Header(default=None)):
+    """Reject requests that don't carry the correct shared secret.
+    If MCP_SECRET is not configured (empty), the check is skipped so the
+    server remains accessible for local dev without any env setup."""
+    if _MCP_SECRET and not secrets.compare_digest(x_mcp_secret or '', _MCP_SECRET):
+        raise HTTPException(status_code=401, detail='Invalid MCP secret')
 
 
 @app.get('/tools')
@@ -22,7 +33,7 @@ def list_tools():
 
 
 @app.get('/customer/{customer_name}')
-def get_customer(customer_name: str):
+def get_customer(customer_name: str, _: None = Depends(_check_secret)):
     """Return customer profile by name. Returns {} if not found."""
     with engine.begin() as conn:
         row = conn.execute(
@@ -33,7 +44,7 @@ def get_customer(customer_name: str):
 
 
 @app.get('/issues/{customer_name}')
-def get_open_issues_for_customer(customer_name: str):
+def get_open_issues_for_customer(customer_name: str, _: None = Depends(_check_secret)):
     """Return all open issues for a customer. Returns {issues: []} if none found."""
     with engine.begin() as conn:
         rows = conn.execute(
@@ -51,7 +62,7 @@ def get_open_issues_for_customer(customer_name: str):
 
 
 @app.get('/history/{issue_id}')
-def get_issue_history(issue_id: int):
+def get_issue_history(issue_id: int, _: None = Depends(_check_secret)):
     """Return update history for a specific issue. Returns {history: []} if none found."""
     with engine.begin() as conn:
         rows = conn.execute(
@@ -67,7 +78,7 @@ def get_issue_history(issue_id: int):
 
 
 @app.get('/issues')
-def list_issues_filtered(severity: Optional[str] = None, statuses: Optional[str] = None):
+def list_issues_filtered(severity: Optional[str] = None, statuses: Optional[str] = None, _: None = Depends(_check_secret)):
     """
     Portfolio-wide issue list with optional filters.
     severity: optional (critical|high|medium|low)

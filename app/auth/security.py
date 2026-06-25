@@ -1,34 +1,61 @@
+import time
 from typing import List, Optional
 from fastapi import Header, HTTPException
 from jose import jwt
 import httpx
 from core.config import KEYCLOAK_JWKS_URL, KEYCLOAK_CLIENT_ID, APP_ENV, KEYCLOAK_SERVER_URL, KEYCLOAK_REALM
 
-# Derived at import time so it never needs passing as an argument
 KEYCLOAK_ISSUER = f'{KEYCLOAK_SERVER_URL}/realms/{KEYCLOAK_REALM}'
 
-_jwks_cache = None
-
-def _get_jwks():
-    global _jwks_cache
-    if _jwks_cache is None and KEYCLOAK_JWKS_URL:
-        try:
-            with httpx.Client(timeout=10.0) as client:
-                _jwks_cache = client.get(KEYCLOAK_JWKS_URL).json()
-        except Exception:
-            _jwks_cache = {"keys": []}
-    return _jwks_cache or {"keys": []}
+# JWKS cache with TTL — refreshed every 5 minutes so key rotation
+# doesn't require an app restart. Falls back to the stale cache on fetch error
+# rather than blocking all auth requests.
+_jwks_cache: dict = {"keys": []}
+_jwks_fetched_at: float = 0.0
+_JWKS_TTL = 300  # seconds
 
 
-def _decode_token(token: str):
+def _get_jwks() -> dict:
+    global _jwks_cache, _jwks_fetched_at
+    now = time.monotonic()
+    if now - _jwks_fetched_at < _JWKS_TTL:
+        return _jwks_cache
+    if not KEYCLOAK_JWKS_URL:
+        return {"keys": []}
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            fresh = client.get(KEYCLOAK_JWKS_URL).json()
+        _jwks_cache = fresh
+        _jwks_fetched_at = now
+    except Exception:
+        # Keep stale cache on transient error; next request will retry
+        _jwks_fetched_at = now - _JWKS_TTL + 30  # retry in 30 s, not immediately
+    return _jwks_cache
+
+
+def _decode_token(token: str) -> dict:
     jwks = _get_jwks()
     unverified = jwt.get_unverified_header(token)
     kid = unverified.get('kid')
-    keys = jwks.get('keys', [])
-    key = next((k for k in keys if k.get('kid') == kid), None)
+    key = next((k for k in jwks.get('keys', []) if k.get('kid') == kid), None)
     if not key:
         raise HTTPException(status_code=401, detail='Unable to find signing key')
-    return jwt.decode(token, key, algorithms=['RS256'], issuer=KEYCLOAK_ISSUER, options={"verify_aud": False})
+
+    claims = jwt.decode(
+        token, key,
+        algorithms=['RS256'],
+        issuer=KEYCLOAK_ISSUER,
+        options={"verify_aud": False},
+    )
+
+    # Validate authorized party — Keycloak doesn't emit an aud claim by default,
+    # but azp (authorized party) identifies which client requested the token.
+    # Reject tokens issued for a different client on the same realm.
+    azp = claims.get('azp', '')
+    if azp and azp != KEYCLOAK_CLIENT_ID:
+        raise HTTPException(status_code=401, detail='Token not issued for this client')
+
+    return claims
 
 
 def _roles_from_claims(claims: dict) -> List[str]:
@@ -37,7 +64,11 @@ def _roles_from_claims(claims: dict) -> List[str]:
     return sorted(list(set(realm_roles + client_roles)))
 
 
-def get_user_context(authorization: Optional[str] = Header(default=None), x_role: Optional[str] = Header(default=None), x_user: Optional[str] = Header(default='demo.user')):
+def get_user_context(
+    authorization: Optional[str] = Header(default=None),
+    x_role: Optional[str] = Header(default=None),
+    x_user: Optional[str] = Header(default='demo.user'),
+) -> dict:
     if authorization and authorization.lower().startswith('bearer '):
         token = authorization.split(' ', 1)[1].strip()
         try:

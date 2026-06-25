@@ -4,7 +4,7 @@ import time
 import yaml
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from auth.security import get_user_context
 from agents.orchestrator import run_agent
 from services.keycloak_client import get_password_token
@@ -17,7 +17,7 @@ _YAML_PATHS = [
 router = APIRouter()
 
 class QueryRequest(BaseModel):
-    user_query: str
+    user_query: str = Field(..., max_length=2000)
     session_id: str = 'demo-session'
 
 class LoginRequest(BaseModel):

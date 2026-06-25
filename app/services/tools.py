@@ -1,5 +1,5 @@
 import httpx
-from core.config import MCP_SERVER_URL
+from core.config import MCP_SERVER_URL, MCP_SECRET
 from repositories.customer_repo import get_customer_by_name, resolve_customer_name
 from repositories.issue_repo import get_open_issues_for_customer, get_issue_history, create_next_action
 from services.memory_service import get_cached_customer_profile, cache_customer_profile
@@ -11,10 +11,14 @@ def _mcp_get(path: str):
     Call the MCP server. Returns the parsed JSON dict/list on success,
     or None if MCP is unavailable (timeout, connection error, non-200 status).
     Never raises — callers always fall back to direct DB on None.
+    Sends X-MCP-Secret if configured so MCP can reject unauthenticated callers.
     """
     try:
+        headers = {}
+        if MCP_SECRET:
+            headers['X-MCP-Secret'] = MCP_SECRET
         with httpx.Client(timeout=3.0) as client:
-            r = client.get(f'{MCP_SERVER_URL}{path}')
+            r = client.get(f'{MCP_SERVER_URL}{path}', headers=headers)
             if r.status_code == 200:
                 return r.json()
     except Exception:

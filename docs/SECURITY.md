@@ -3,9 +3,15 @@
 ## Authentication
 
 **JWT bearer tokens issued by Keycloak.**
-All production requests require `Authorization: Bearer <token>`. The FastAPI app fetches Keycloak's JWKS endpoint on first request, caches the key set in memory, and validates every token signature, algorithm, and key ID before processing any request. Invalid or missing tokens return HTTP 401.
+All production requests require `Authorization: Bearer <token>`. The FastAPI app fetches Keycloak's JWKS endpoint and validates every token for signature (RS256), key ID, issuer, and authorized party (`azp`) before processing any request. Invalid or missing tokens return HTTP 401.
 
 `app/auth/security.py` — `_decode_token()` and `get_user_context()`
+
+**JWKS cache refreshes every 5 minutes.**
+The JWKS key set is cached in memory with a 300-second TTL. Expired keys trigger a background refetch; if the fetch fails, the stale cache is retained and a retry is scheduled in 30 seconds. This means key rotation takes effect within 5 minutes without an app restart.
+
+**`azp` (authorized party) validation.**
+Keycloak's access tokens for this realm do not include an `aud` claim by default (no audience mapper configured). The app validates the `azp` claim instead — tokens issued for a different client on the same Keycloak realm are rejected with HTTP 401. This prevents cross-client token reuse.
 
 **Local header override is app-env gated.**
 `x-role` / `x-user` header bypass is only active when `APP_ENV=local`. In any other environment value, a missing bearer token returns 401. This is not a backdoor; it is an explicit dev-only convenience that is disabled by a single env variable.
@@ -108,6 +114,39 @@ docker exec acme-redis redis-cli -a acme-redis-local PING
 
 ---
 
+## Rate Limiting
+
+**nginx rate limits protect against brute force and flood attacks.**
+
+Two zones are configured in `nginx/nginx.conf`:
+
+| Zone | Applies to | Rate | Burst |
+|---|---|---|---|
+| `auth_limit` | `POST /auth/token` | 5 req/min per IP | 3 — strict; excess returns 503 |
+| `api_limit` | All other API routes | 10 req/s per IP | 30 — generous for eval suite |
+
+The auth endpoint limit (5 req/min) prevents credential brute force. The API limit (10 req/s, burst 30) prevents flood attacks while comfortably accommodating the 14-case eval suite running sequentially.
+
+---
+
+## MCP Server Authentication
+
+**Shared secret between app and MCP server.**
+When `MCP_SECRET` is set in `.env`, the app sends `X-MCP-Secret: <secret>` on every MCP call, and the MCP server rejects requests that omit or misstate it. The comparison uses `secrets.compare_digest()` (constant-time) to prevent timing attacks.
+
+The `/tools` endpoint remains open (no secret required) so Docker healthchecks and service discovery work without credentials.
+
+If `MCP_SECRET` is empty (not configured), the check is skipped — the server remains accessible for local dev without any additional setup. Set it for any shared or non-local environment.
+
+---
+
+## Input Validation
+
+**Query length is capped at 2000 characters.**
+The `QueryRequest` Pydantic model enforces `max_length=2000` on `user_query`. Requests exceeding this return HTTP 422 before reaching the LLM. This prevents token blowout attacks where an adversary submits a 100KB prompt to drain OpenAI quota or exhaust memory.
+
+---
+
 ## Known Limitations (dev / prototype scope)
 
 | Limitation | Risk | Production mitigation |
@@ -119,3 +158,5 @@ docker exec acme-redis redis-cli -a acme-redis-local PING
 | No token revocation | Tokens valid until expiry (5 min default) | Use short-lived tokens; implement Keycloak token introspection |
 | `.env` contains live API key | Key could be committed accidentally | Use secrets manager (Vault, AWS Secrets Manager); add `.env` to `.gitignore` |
 | `APP_ENV=local` bypass | Header override could reach prod if misconfigured | Ensure `APP_ENV` is explicitly set in all non-local environments |
+| MCP secret is a shared static secret | Compromised secret allows direct DB reads | Replace with mTLS or a signed JWT in production |
+| `verify_aud: False` | Any Keycloak realm token passes audience check | Add Keycloak audience mapper; enable strict audience validation in production |
