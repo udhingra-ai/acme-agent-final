@@ -51,11 +51,11 @@ for idx, t in enumerate(tests):
         # A grounded response invokes at least one tool and returns the result faithfully,
         # even if the DB returned no rows (unknown customer = correctly grounded empty response).
         # A non-grounded response would answer without calling any tools (hallucination).
-        # 403 is grounded by definition — RBAC enforced correctly.
+        # 403 = RBAC enforced correctly; 400 = prompt_guard blocked before any LLM call — both grounded.
         if r.status_code == 200:
             tool_steps = [s for s in body.get('steps', []) if s.get('tool')]
             row['grounded'] = bool(tool_steps)
-        elif r.status_code == 403:
+        elif r.status_code in (400, 403):
             row['grounded'] = True
         else:
             row['grounded'] = False
