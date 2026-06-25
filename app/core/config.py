@@ -1,0 +1,12 @@
+import os
+DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql+psycopg://acme:acme@localhost:5432/acme_ops')
+REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+MCP_SERVER_URL = os.getenv('MCP_SERVER_URL', 'http://localhost:8100')
+KEYCLOAK_SERVER_URL = os.getenv('KEYCLOAK_SERVER_URL', 'http://localhost:8080')
+KEYCLOAK_REALM = os.getenv('KEYCLOAK_REALM', 'acme')
+KEYCLOAK_CLIENT_ID = os.getenv('KEYCLOAK_CLIENT_ID', 'acme-agent')
+KEYCLOAK_CLIENT_SECRET = os.getenv('KEYCLOAK_CLIENT_SECRET', '')
+KEYCLOAK_JWKS_URL = os.getenv('KEYCLOAK_JWKS_URL', '')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
+OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4.1-mini')
+APP_ENV = os.getenv('APP_ENV', 'local')

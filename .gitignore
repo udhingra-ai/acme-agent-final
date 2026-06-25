@@ -1,0 +1,45 @@
+# Claude Code internal config (not project source)
+.claude/
+
+# Environment
+.env
+*.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Node / frontend
+web/node_modules/
+web/dist/
+web/.vite/
+
+# Eval reports (generated output, not source)
+evals/reports/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker volumes (local dev)
+postgres_data/
+redis_data/
+keycloak_data/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

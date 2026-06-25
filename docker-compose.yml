@@ -1,0 +1,72 @@
+services:
+  nginx:
+    build: ./nginx
+    container_name: acme-nginx
+    ports:
+      - "443:443"
+    depends_on:
+      - app
+
+  app:
+    build: ./app
+    container_name: acme-app
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      keycloak:
+        condition: service_started
+      mcp-server:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./evals:/evals:ro
+
+  postgres:
+    image: postgres:16
+    container_name: acme-postgres
+    environment:
+      POSTGRES_USER: acme
+      POSTGRES_PASSWORD: acme
+      POSTGRES_DB: acme_ops
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./db/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U acme -d acme_ops"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7
+    container_name: acme-redis
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    ports:
+      - "6379:6379"
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0
+    container_name: acme-keycloak
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json
+    ports:
+      - "8080:8080"
+
+  mcp-server:
+    build: ./mcp_server
+    container_name: acme-mcp
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8100:8100"

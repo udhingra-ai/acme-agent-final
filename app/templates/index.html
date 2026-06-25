@@ -1,0 +1,1044 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Acme Operations Assistant</title>
+<style>
+/* ── Reset & base ───────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+  margin: 0; padding: 28px 36px; max-width: 1100px;
+  color: #1a1a2e; background: #f4f6fa; font-size: 14px; line-height: 1.5;
+}
+
+/* ── App header ─────────────────────────────────────────────────────── */
+.app-header {
+  margin-bottom: 20px; padding-bottom: 14px; border-bottom: 2px solid #dde1e9;
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+}
+.app-header-left h1 { margin: 0 0 3px; font-size: 20px; color: #0a3057; font-weight: 700; }
+.app-header-left .subtitle { margin: 0; color: #666; font-size: 12px; }
+.header-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+
+/* Model pill */
+.model-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: #f0f4ff; border: 1px solid #c5d1ec; border-radius: 20px;
+  padding: 5px 13px; font-size: 11px; color: #1a4a8a; font-weight: 600;
+}
+.model-dot { width: 7px; height: 7px; border-radius: 50%; background: #4d7fd4; flex-shrink: 0; }
+
+/* User avatar pill (shown after sign-in) */
+.user-pill {
+  display: none; align-items: center; gap: 8px;
+  background: #fff; border: 1px solid #dde1e9; border-radius: 20px;
+  padding: 4px 12px 4px 4px; font-size: 12px; color: #333;
+}
+.user-pill.visible { display: inline-flex; }
+.user-pill-avatar {
+  width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700; color: #fff;
+}
+.user-pill-name  { font-weight: 600; color: #1a1a2e; }
+.user-pill-role  { font-size: 10px; color: #888; }
+
+/* ── Two-column layout ──────────────────────────────────────────────── */
+.two-col { display: grid; grid-template-columns: 1fr 1.55fr; gap: 16px; }
+.card {
+  background: #fff; border: 1px solid #dde1e9; border-radius: 8px;
+  padding: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.05);
+}
+.card-title { margin: 0 0 14px; font-size: 14px; font-weight: 700; color: #333;
+  padding-bottom: 10px; border-bottom: 1px solid #eee; }
+
+/* ── Form elements ──────────────────────────────────────────────────── */
+label {
+  display: block; font-size: 11px; font-weight: 700; color: #666;
+  text-transform: uppercase; letter-spacing: .4px; margin: 10px 0 3px;
+}
+label:first-of-type { margin-top: 0; }
+input[type=text], input[type=password], select {
+  width: 100%; padding: 7px 10px; border: 1px solid #ccd0d9; border-radius: 5px;
+  font-size: 13px; font-family: inherit; color: #222; background: #fff;
+}
+input:focus, select:focus, textarea:focus {
+  outline: none; border-color: #4d7fd4; box-shadow: 0 0 0 2px rgba(77,127,212,.15);
+}
+textarea {
+  width: 100%; padding: 10px 12px; border: 1px solid #ccd0d9; border-radius: 6px;
+  font-size: 13px; font-family: inherit; height: 72px; resize: vertical; color: #222;
+}
+
+/* ── Buttons ────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 18px; border: none; border-radius: 5px;
+  font-size: 13px; font-weight: 600; cursor: pointer; transition: background .12s;
+}
+.btn-primary { background: #0a3057; color: #fff; }
+.btn-primary:hover:not(:disabled) { background: #082444; }
+.btn-primary:disabled { background: #7a96b8; cursor: not-allowed; }
+.btn-sm { padding: 5px 10px; font-size: 12px; }
+
+/* ── Identity cards ─────────────────────────────────────────────────── */
+.identity-list { display: flex; flex-direction: column; gap: 8px; }
+.identity-card {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; border: 1px solid #dde1e9; border-radius: 7px;
+  cursor: pointer; transition: border-color .12s, background .12s; background: #fafbfd;
+}
+.identity-card:hover  { border-color: #4d7fd4; background: #f5f8ff; }
+.identity-card.selected { border-color: #0a3057; background: #f0f5ff; }
+.id-avatar {
+  width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; color: #fff; letter-spacing: .3px;
+}
+.av-sales   { background: #2563eb; }
+.av-support { background: #16a34a; }
+.av-admin   { background: #7c3aed; }
+.id-body { flex: 1; min-width: 0; }
+.id-name { font-size: 13px; font-weight: 600; color: #1a1a2e; }
+.id-desc { font-size: 11px; color: #888; margin-top: 1px; }
+.id-role {
+  font-size: 10px; font-weight: 700; border-radius: 9px; padding: 2px 9px;
+  white-space: nowrap; flex-shrink: 0; align-self: center;
+}
+.role-sales   { background: #dbeafe; color: #1d4ed8; }
+.role-support { background: #dcfce7; color: #166534; }
+.role-admin   { background: #f3e8ff; color: #7c3aed; }
+.id-check { color: #0a3057; font-size: 14px; flex-shrink: 0; display: none; }
+.identity-card.selected .id-check { display: inline; }
+
+/* Compact signed-in bar (replaces identity list after login) */
+.signed-in-bar {
+  display: none; align-items: center; gap: 12px;
+  padding: 10px 14px; background: #f0f5ff; border: 1px solid #c5d1ec; border-radius: 7px;
+}
+.signed-in-bar.visible { display: flex; }
+.sib-avatar {
+  width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; color: #fff;
+}
+.sib-info { flex: 1; }
+.sib-name { font-size: 13px; font-weight: 600; color: #0a3057; }
+.sib-role { font-size: 11px; color: #666; }
+.sib-switch { font-size: 11px; color: #4d7fd4; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; flex-shrink: 0; }
+.sib-switch:hover { color: #0a3057; }
+
+.id-manual-link {
+  font-size: 11px; color: #bbb; cursor: pointer; margin-top: 10px;
+  display: inline-block; text-decoration: underline; text-underline-offset: 2px;
+}
+.id-manual-link:hover { color: #555; }
+.id-manual { display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee; }
+
+/* ── Token status ───────────────────────────────────────────────────── */
+.token-status {
+  margin-top: 10px; padding: 8px 12px; border-radius: 5px; font-size: 12px; display: none;
+}
+.token-status.ok  { background: #e8f5e9; border: 1px solid #a5d6a7; color: #1b5e20; }
+.token-status.err { background: #fef2f2; border: 1px solid #fca5a5; color: #7f1d1d; }
+
+/* ── Auth mode (dev) ────────────────────────────────────────────────── */
+.auth-meta { margin-top: 14px; padding-top: 10px; border-top: 1px solid #eee; font-size: 11px; color: #888; }
+.auth-meta select { width: auto; font-size: 11px; padding: 2px 6px; }
+.auth-meta label { display: inline; text-transform: none; font-weight: normal; letter-spacing: 0; margin: 0; }
+
+/* ── Greeting ───────────────────────────────────────────────────────── */
+.greeting { display: none; margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid #eee; }
+.greeting-text { font-size: 16px; font-weight: 700; color: #0a3057; margin-bottom: 2px; }
+.greeting-sub  { font-size: 12px; color: #777; }
+
+/* ── Scope hint ─────────────────────────────────────────────────────── */
+.scope-hint { font-size: 11px; color: #888; margin: 5px 0 0; line-height: 1.5; }
+
+/* ── Example prompt cards ───────────────────────────────────────────── */
+.example-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 10px; }
+.example-card {
+  background: #fafbfd; border: 1px solid #dde1e9; border-radius: 6px;
+  padding: 10px 12px; cursor: pointer; transition: border-color .1s, background .1s;
+}
+.example-card:hover { border-color: #4d7fd4; background: #f5f8ff; }
+.ex-type {
+  font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
+  border-radius: 8px; padding: 2px 8px; display: inline-block; margin-bottom: 5px;
+}
+.t-multi  { background: #dbeafe; color: #1d4ed8; }
+.t-skill  { background: #f3e8ff; color: #7c3aed; }
+.t-rbac   { background: #fee2e2; color: #b91c1c; }
+.t-lookup { background: #dcfce7; color: #166534; }
+.ex-text { font-size: 12px; color: #333; line-height: 1.4; }
+
+/* ── Loading bar ────────────────────────────────────────────────────── */
+.loading-bar {
+  display: none; align-items: center; gap: 10px;
+  padding: 10px 14px; background: #f0f5ff; border: 1px solid #b8ccf0;
+  border-radius: 6px; margin-top: 10px; font-size: 12px; color: #1a4a8a;
+}
+.loading-bar.active { display: flex; }
+.spin {
+  width: 15px; height: 15px; border: 2px solid #bed0f0; border-top-color: #1a4a8a;
+  border-radius: 50%; animation: spin .75s linear infinite; flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Empty state ────────────────────────────────────────────────────── */
+.empty-state {
+  text-align: center; padding: 32px 20px; color: #aaa;
+  background: #fff; border: 1px dashed #dde1e9; border-radius: 8px; margin-top: 16px;
+}
+.empty-state .em-title { font-size: 14px; color: #888; font-weight: 600; margin-bottom: 6px; }
+.empty-state .em-hint  { font-size: 12px; }
+
+/* ── Error box ──────────────────────────────────────────────────────── */
+.error-box {
+  display: none; margin-top: 16px; padding: 14px 16px;
+  background: #fef2f2; border: 1px solid #fca5a5; border-radius: 8px;
+}
+.error-title  { font-weight: 700; color: #b91c1c; margin-bottom: 4px; font-size: 14px; }
+.error-msg    { font-size: 13px; color: #555; }
+.error-detail { font-size: 11px; color: #999; margin-top: 6px; font-family: monospace; }
+
+/* ── Answer area — no header stripe ────────────────────────────────── */
+.answer-area {
+  display: none; margin-top: 16px; background: #fff;
+  border: 1px solid #dde1e9; border-radius: 8px; overflow: hidden;
+  box-shadow: 0 1px 4px rgba(0,0,0,.05);
+}
+.answer-body { padding: 20px; }
+
+/* ── Query bubble ───────────────────────────────────────────────────── */
+.query-bubble { display: flex; justify-content: flex-end; margin-bottom: 18px; }
+.query-bubble-inner {
+  background: #0a3057; color: #fff; border-radius: 14px 14px 3px 14px;
+  padding: 10px 16px; font-size: 13px; max-width: 76%; line-height: 1.5;
+}
+
+/* ── Answer intro sentence ──────────────────────────────────────────── */
+.answer-intro {
+  font-size: 13px; color: #333; line-height: 1.6;
+  margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid #f0f2f5;
+}
+
+/* ── Answer sections ────────────────────────────────────────────────── */
+.a-section { margin-bottom: 16px; }
+.a-section:last-child { margin-bottom: 0; }
+.a-label {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .6px; color: #888; margin-bottom: 6px;
+}
+.a-value { font-size: 13px; color: #222; }
+
+/* Customer profile */
+.profile-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.profile-name { font-size: 15px; font-weight: 700; color: #0a3057; }
+.profile-pill {
+  font-size: 11px; padding: 2px 9px; border-radius: 10px;
+  background: #eef2fb; color: #1a4a8a; font-weight: 600;
+}
+.health-amber { background: #fff8e1; color: #b45309; }
+.health-green { background: #f0fdf4; color: #166534; }
+.health-red   { background: #fef2f2; color: #b91c1c; }
+
+/* Issue list */
+.issue-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.issue-row {
+  display: flex; gap: 8px; align-items: center;
+  padding: 8px 10px; border: 1px solid #eee; border-radius: 5px; background: #fafafa;
+}
+.issue-row-main { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sev {
+  font-size: 10px; font-weight: 800; border-radius: 4px;
+  padding: 2px 6px; white-space: nowrap; flex-shrink: 0; text-transform: uppercase;
+}
+.sev-critical { background: #fef2f2; color: #b91c1c; }
+.sev-high     { background: #fff7ed; color: #c2410c; }
+.sev-medium   { background: #fefce8; color: #854d0e; }
+.sev-low      { background: #f0fdf4; color: #166534; }
+.issue-id-tag { font-size: 11px; font-family: monospace; color: #6b7280; font-weight: 600; flex-shrink: 0; }
+.issue-title  { font-size: 13px; color: #333; }
+
+/* Issue status badge — right-aligned */
+.issue-status {
+  font-size: 10px; font-weight: 700; border-radius: 4px; padding: 2px 8px;
+  white-space: nowrap; flex-shrink: 0; text-transform: capitalize; margin-left: auto;
+}
+.st-open    { background: #dbeafe; color: #1d4ed8; }
+.st-inprog  { background: #fef9c3; color: #854d0e; }
+.st-waiting { background: #f3f4f6; color: #6b7280; }
+.st-default { background: #f3f4f6; color: #6b7280; }
+
+/* Latest status — clean prose, no blockquote */
+.latest-status-text {
+  font-size: 13px; color: #333; line-height: 1.6;
+  padding: 10px 12px; background: #f8f9fb; border-radius: 5px;
+}
+.latest-status-meta { font-size: 11px; color: #999; margin-top: 5px; }
+
+/* Escalation */
+.risk-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.risk-pill { font-size: 12px; font-weight: 700; border-radius: 14px; padding: 4px 14px; }
+.risk-Critical { background: #fef2f2; color: #b91c1c; }
+.risk-High     { background: #fff7ed; color: #c2410c; }
+.risk-Medium   { background: #fefce8; color: #854d0e; }
+.risk-Low      { background: #f0fdf4; color: #166534; }
+.escalation-summary { font-size: 13px; color: #444; }
+.missing-info { font-size: 11px; color: #999; margin-top: 5px; }
+
+/* Next action */
+.action-card {
+  background: #f0fdf4; border: 1px solid #86efac; border-left: 4px solid #16a34a;
+  border-radius: 0 6px 6px 0; padding: 10px 14px;
+}
+.action-label-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.action-badge {
+  font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
+  background: #16a34a; color: #fff; border-radius: 4px; padding: 2px 7px;
+}
+.action-text { font-size: 13px; color: #222; }
+.action-meta { font-size: 11px; color: #666; margin-top: 6px; }
+
+/* ── Grounded-in row ────────────────────────────────────────────────── */
+.grounded-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin-top: 16px; padding: 8px 12px;
+  background: #fafbfd; border: 1px solid #eaecf0; border-radius: 6px;
+}
+.grounded-label {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .5px; color: #bbb; margin-right: 2px;
+}
+.grounded-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: #fff; border: 1px solid #dde1e9; border-radius: 10px;
+  padding: 1px 9px; font-size: 11px; color: #444; font-weight: 500;
+}
+.gpill-dot { width: 6px; height: 6px; border-radius: 50%; background: #4d7fd4; flex-shrink: 0; }
+
+/* ── Technical trace ────────────────────────────────────────────────── */
+.trace-wrap { margin-top: 6px; }
+.trace-toggle {
+  display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  font-size: 11px; color: #bbb; padding: 3px 0; user-select: none;
+}
+.trace-toggle:hover { color: #555; }
+.trace-arrow { display: inline-block; transition: transform .18s; font-style: normal; font-size: 9px; }
+.trace-arrow.open { transform: rotate(90deg); }
+.trace-panel {
+  display: none; margin-top: 8px; background: #f8f9fb;
+  border: 1px solid #dde1e9; border-radius: 6px; padding: 14px;
+}
+.trace-panel.open { display: block; }
+.trace-section-title {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .4px; color: #777; margin: 0 0 6px;
+}
+.trace-section-title:not(:first-child) { margin-top: 12px; }
+.trace-divider { border: none; border-top: 1px solid #e4e7ec; margin: 10px 0; }
+
+/* Badges */
+.badge-row { display: flex; flex-wrap: wrap; gap: 5px; }
+.badge { font-size: 11px; font-weight: 700; border-radius: 10px; padding: 2px 9px; white-space: nowrap; }
+.b-auth    { background: #dcfce7; color: #166534; }
+.b-local   { background: #fef9c3; color: #854d0e; }
+.b-role    { background: #dbeafe; color: #1d4ed8; }
+.b-planner { background: #f3e8ff; color: #7c3aed; }
+.b-session { background: #e0f2fe; color: #0369a1; }
+
+/* Tool chain */
+.tool-chain { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.tool-node {
+  background: #eef2fb; border: 1px solid #c5d1ec; border-radius: 4px;
+  padding: 3px 8px; font-size: 11px; font-family: monospace; color: #1a3a6e;
+}
+.tool-skill { background: #f3e8ff; border-color: #c4b5fd; color: #5b21b6; }
+.tool-arrow { color: #bbb; font-size: 13px; margin: 0 1px; }
+
+/* MCP note */
+.mcp-note {
+  margin-top: 8px; padding: 8px 12px; background: #f5f0ff;
+  border: 1px solid #d8b4fe; border-radius: 5px;
+  font-size: 11px; color: #5b21b6; line-height: 1.6;
+}
+.mcp-note a { color: #7c3aed; }
+
+/* Trace text blocks */
+.trace-text {
+  font-size: 12px; color: #444; line-height: 1.6;
+  background: #fff; border: 1px solid #e4e7ec; border-radius: 4px;
+  padding: 8px 10px; white-space: pre-wrap;
+}
+
+/* Raw JSON */
+pre.json-out {
+  background: #1e1e2e; color: #cdd6f4; padding: 12px; border-radius: 4px;
+  font-size: 11px; overflow: auto; max-height: 260px; white-space: pre-wrap; margin: 0;
+}
+
+/* ── Footer ─────────────────────────────────────────────────────────── */
+.footer-links { margin-top: 14px; font-size: 11px; color: #bbb; }
+.footer-links a { color: #6b8cc4; text-decoration: none; margin-right: 14px; }
+.footer-links a:hover { text-decoration: underline; }
+
+/* ── Responsive ─────────────────────────────────────────────────────── */
+@media (max-width: 720px) {
+  .two-col { grid-template-columns: 1fr; }
+  .example-grid { grid-template-columns: 1fr; }
+  .app-header { flex-wrap: wrap; gap: 8px; }
+}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="app-header">
+  <div class="app-header-left">
+    <h1>Acme Operations Assistant</h1>
+    <p class="subtitle">Customer support &amp; operations &mdash; query customer profiles, open issues, status history, and recommended actions.</p>
+  </div>
+  <div class="header-right">
+    <!-- User pill — shown after sign-in -->
+    <div class="user-pill" id="userPill">
+      <div class="user-pill-avatar" id="userPillAvatar"></div>
+      <div>
+        <div class="user-pill-name" id="userPillName"></div>
+        <div class="user-pill-role" id="userPillRole"></div>
+      </div>
+    </div>
+    <div class="model-pill">
+      <span class="model-dot"></span>
+      gpt-4.1-mini &nbsp;&middot;&nbsp; agent
+    </div>
+  </div>
+</div>
+
+<!-- Two-column: Sign in | Ask assistant -->
+<div class="two-col">
+
+  <!-- Sign in -->
+  <div class="card">
+    <div class="card-title" id="signInTitle">Sign in</div>
+
+    <!-- Compact signed-in bar (shown after login) -->
+    <div class="signed-in-bar" id="signedInBar">
+      <div class="sib-avatar" id="sibAvatar"></div>
+      <div class="sib-info">
+        <div class="sib-name" id="sibName"></div>
+        <div class="sib-role" id="sibRole"></div>
+      </div>
+      <span class="sib-switch" onclick="switchUser()">Switch</span>
+    </div>
+
+    <!-- Identity cards (hidden after login) -->
+    <div id="identitySection">
+      <div class="identity-list" id="identityList">
+        <div class="identity-card" id="icard-0" onclick="doLoginAs(0)">
+          <div class="id-avatar av-sales">DR</div>
+          <div class="id-body">
+            <div class="id-name">Dana Reyes</div>
+            <div class="id-desc">Read-only &middot; customers &amp; issues</div>
+          </div>
+          <span class="id-role role-sales">sales_user</span>
+          <span class="id-check">&#10003;</span>
+        </div>
+        <div class="identity-card" id="icard-1" onclick="doLoginAs(1)">
+          <div class="id-avatar av-support">SO</div>
+          <div class="id-body">
+            <div class="id-name">Sam Okafor</div>
+            <div class="id-desc">Read + update issues</div>
+          </div>
+          <span class="id-role role-support">support_user</span>
+          <span class="id-check">&#10003;</span>
+        </div>
+        <div class="identity-card" id="icard-2" onclick="doLoginAs(2)">
+          <div class="id-avatar av-admin">AM</div>
+          <div class="id-body">
+            <div class="id-name">Alex Morgan</div>
+            <div class="id-desc">Full access &middot; incl. next actions</div>
+          </div>
+          <span class="id-role role-admin">admin</span>
+          <span class="id-check">&#10003;</span>
+        </div>
+      </div>
+
+      <div id="tokenStatus" class="token-status"></div>
+
+      <span class="id-manual-link" onclick="toggleManual()">Other / manual sign-in</span>
+      <div class="id-manual" id="manualForm">
+        <label>Username</label>
+        <input id="username" type="text" value="bob.support" autocomplete="username">
+        <label>Password</label>
+        <input id="password" type="password" value="Password123!" autocomplete="current-password">
+        <div style="margin-top:10px">
+          <button class="btn btn-primary btn-sm" onclick="doLoginManual()">Sign in via Keycloak</button>
+        </div>
+        <p class="scope-hint" style="margin-top:8px">
+          Accounts: <code>alice.sales</code> &nbsp;·&nbsp; <code>bob.support</code> &nbsp;·&nbsp; <code>carol.admin</code><br>
+          Password: <code>Password123!</code>
+        </p>
+      </div>
+    </div><!-- /#identitySection -->
+
+    <div class="auth-meta" id="authMeta">
+      <label>Auth mode:</label>
+      <select id="mode" onchange="onModeChange()">
+        <option value="bearer">Bearer token (from sign-in above)</option>
+        <option value="header">Local header override (dev / no Keycloak)</option>
+      </select>
+      <div id="localRoleRow" style="display:none;margin-top:6px">
+        <label>Role override:</label>
+        <select id="role">
+          <option>sales_user</option>
+          <option selected>support_user</option>
+          <option>admin</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- Ask assistant -->
+  <div class="card">
+    <!-- Greeting (shown after sign-in) -->
+    <div class="greeting" id="greeting">
+      <div class="greeting-text" id="greetingText">Hi — what do you need?</div>
+      <div class="greeting-sub"  id="greetingSub">Ask about a customer, their open issues, or escalation risk.</div>
+    </div>
+
+    <div id="queryCardTitle" class="card-title">Ask the assistant</div>
+
+    <textarea id="query">Show me open customer issues for Client X, summarise the latest status, and suggest the next action.</textarea>
+    <p class="scope-hint">Customers in this demo: <strong>Client X</strong>, <strong>Northwind Health</strong>, <strong>BluePeak Retail</strong></p>
+
+    <!-- Example prompt cards (2 × 2) -->
+    <div class="example-grid">
+      <div class="example-card" onclick="setQ('Show me open customer issues for Client X, summarise the latest status, and suggest the next action')">
+        <div class="ex-type t-multi">multi-tool</div>
+        <div class="ex-text">Open issues for Client X, status + next action</div>
+      </div>
+      <div class="example-card" onclick="setQ('Summarise the latest status for Client X and suggest the next action')">
+        <div class="ex-type t-skill">skill</div>
+        <div class="ex-text">Escalation summary for Client X</div>
+      </div>
+      <div class="example-card" onclick="setQ('Summarise the latest status for Client X and suggest the next action')">
+        <div class="ex-type t-rbac">RBAC</div>
+        <div class="ex-text">Recommend next action for Client X</div>
+      </div>
+      <div class="example-card" onclick="setQ('Give me the customer profile for Northwind Health')">
+        <div class="ex-type t-lookup">lookup</div>
+        <div class="ex-text">How healthy is Northwind Health right now?</div>
+      </div>
+    </div>
+
+    <div style="margin-top:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <button class="btn btn-primary" id="runBtn" onclick="doQuery()">Ask Assistant</button>
+      <span style="font-size:11px;color:#aaa">
+        Session:&nbsp;<input id="session" type="text" value="demo-session"
+          style="width:110px;font-size:11px;padding:3px 6px">
+        <span style="color:#bbb">(same session = Redis memory)</span>
+      </span>
+    </div>
+
+    <div id="loadingBar" class="loading-bar">
+      <div class="spin"></div>
+      <span id="loadingMsg">Planning query&hellip;</span>
+    </div>
+  </div>
+
+</div><!-- /.two-col -->
+
+<!-- Empty state -->
+<div id="emptyState" class="empty-state" style="margin-top:16px">
+  <div class="em-title">Ask about a customer to get started.</div>
+  <div class="em-hint">Supported: customer profiles &nbsp;&middot;&nbsp; open issues &nbsp;&middot;&nbsp; issue history &nbsp;&middot;&nbsp; recommended next actions</div>
+</div>
+
+<!-- Error box -->
+<div id="errorBox" class="error-box">
+  <div class="error-title" id="errorTitle">Request failed</div>
+  <div class="error-msg"   id="errorMsg"></div>
+  <div class="error-detail" id="errorDetail"></div>
+</div>
+
+<!-- Answer area — no header stripe, starts directly with content -->
+<div id="answerArea" class="answer-area">
+  <div class="answer-body" id="answerBody"></div>
+</div>
+
+<!-- Technical trace (collapsible one-liner) -->
+<div id="traceWrap" class="trace-wrap" style="display:none">
+  <span class="trace-toggle" id="traceToggle" onclick="toggleTrace()">
+    <i class="trace-arrow" id="traceArrow">&#9654;</i>
+    <span id="traceLabel">Agent trace</span>
+  </span>
+  <div class="trace-panel" id="tracePanel">
+
+    <div class="trace-section-title">Authentication &amp; context</div>
+    <div class="badge-row" id="badgeRow"></div>
+
+    <hr class="trace-divider">
+    <div class="trace-section-title">Tool execution chain</div>
+    <div class="tool-chain" id="toolChain"></div>
+    <div class="mcp-note" id="mcpNote"></div>
+
+    <hr class="trace-divider">
+    <div class="trace-section-title">Planner reasoning (LLM or rule-based)</div>
+    <div class="trace-text" id="reasoningText"></div>
+
+    <hr class="trace-divider">
+    <div class="trace-section-title">Session memory (Redis)</div>
+    <div class="trace-text" id="sessionText"></div>
+
+    <hr class="trace-divider">
+    <div class="trace-section-title">Raw API payload</div>
+    <pre class="json-out" id="rawJson"></pre>
+
+  </div>
+</div>
+
+<!-- Footer -->
+<div class="footer-links">
+  <a href="/docs" target="_blank">API docs (Swagger)</a>
+  <a href="http://localhost:8100/tools" target="_blank">MCP tool registry (:8100)</a>
+  <a href="http://localhost:8080" target="_blank">Keycloak admin (:8080)</a>
+</div>
+
+<script>
+'use strict';
+
+/* ── State ─────────────────────────────────────────────────────────── */
+let bearerToken = '';
+let lastQuery   = '';
+
+/* ── Identity definitions ──────────────────────────────────────────── */
+const IDENTITIES = [
+  { username: 'alice.sales',  password: 'Password123!', initials: 'DR', display: 'Dana',  fullName: 'Dana Reyes',  role: 'Sales',   friendlyRole: 'sales_user',   avatarClass: 'av-sales'   },
+  { username: 'bob.support',  password: 'Password123!', initials: 'SO', display: 'Sam',   fullName: 'Sam Okafor',  role: 'Support', friendlyRole: 'support_user', avatarClass: 'av-support' },
+  { username: 'carol.admin',  password: 'Password123!', initials: 'AM', display: 'Alex',  fullName: 'Alex Morgan', role: 'Admin',   friendlyRole: 'admin',        avatarClass: 'av-admin'   },
+];
+
+/* ── Helpers ───────────────────────────────────────────────────────── */
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function issId(n) { return 'ISS-' + String(n).padStart(4, '0'); }
+function setQ(q)  { document.getElementById('query').value = q; document.getElementById('query').focus(); }
+function onModeChange() {
+  document.getElementById('localRoleRow').style.display =
+    document.getElementById('mode').value === 'header' ? 'block' : 'none';
+}
+function show(id) { document.getElementById(id).style.display = 'block'; }
+function hide(id) { document.getElementById(id).style.display = 'none'; }
+function toggleManual() {
+  const m = document.getElementById('manualForm');
+  m.style.display = m.style.display === 'block' ? 'none' : 'block';
+}
+
+/* ── Sign-in collapse / expand ─────────────────────────────────────── */
+function collapseSignIn(id) {
+  /* Hide identity list and auth meta */
+  hide('identitySection');
+  hide('authMeta');
+  document.getElementById('signInTitle').textContent = 'Signed in';
+
+  /* Show compact bar */
+  const bar = document.getElementById('signedInBar');
+  const av  = document.getElementById('sibAvatar');
+  av.className  = 'sib-avatar ' + id.avatarClass;
+  av.textContent = id.initials;
+  document.getElementById('sibName').textContent = id.fullName;
+  document.getElementById('sibRole').textContent = id.friendlyRole;
+  bar.classList.add('visible');
+
+  /* Show user pill in header */
+  const pill = document.getElementById('userPill');
+  const pav  = document.getElementById('userPillAvatar');
+  pav.className  = 'user-pill-avatar ' + id.avatarClass;
+  pav.textContent = id.initials;
+  document.getElementById('userPillName').textContent = id.fullName;
+  document.getElementById('userPillRole').textContent = id.friendlyRole;
+  pill.classList.add('visible');
+}
+
+function switchUser() {
+  /* Re-show identity list */
+  show('identitySection');
+  show('authMeta');
+  document.getElementById('signInTitle').textContent = 'Sign in';
+  document.getElementById('signedInBar').classList.remove('visible');
+  document.getElementById('userPill').classList.remove('visible');
+  document.querySelectorAll('.identity-card').forEach(c => c.classList.remove('selected'));
+  const ts = document.getElementById('tokenStatus');
+  ts.style.display = 'none'; ts.className = 'token-status';
+  bearerToken = '';
+  /* Hide greeting */
+  document.getElementById('greeting').style.display = 'none';
+  document.getElementById('queryCardTitle').style.display = 'block';
+}
+
+/* ── Greeting ──────────────────────────────────────────────────────── */
+function showGreeting(name, role) {
+  document.getElementById('greetingText').textContent = 'Hi ' + name + ' — what do you need?';
+  document.getElementById('greetingSub').textContent =
+    'Ask about a customer, their open issues, or escalation risk. You’re signed in as ' + role + '.';
+  document.getElementById('greeting').style.display = 'block';
+  document.getElementById('queryCardTitle').style.display = 'none';
+}
+
+/* ── Loading messages ──────────────────────────────────────────────── */
+const MSGS = ['Planning query…', 'Retrieving customer data…', 'Running MCP-backed tools…', 'Generating response…'];
+let loadTimer = null;
+function startLoad() {
+  let i = 0;
+  document.getElementById('loadingMsg').textContent = MSGS[0];
+  document.getElementById('loadingBar').classList.add('active');
+  loadTimer = setInterval(() => {
+    i = Math.min(i + 1, MSGS.length - 1);
+    document.getElementById('loadingMsg').textContent = MSGS[i];
+  }, 950);
+}
+function stopLoad() {
+  clearInterval(loadTimer);
+  document.getElementById('loadingBar').classList.remove('active');
+}
+
+/* ── Identity card sign-in ─────────────────────────────────────────── */
+async function doLoginAs(idx) {
+  const id  = IDENTITIES[idx];
+  document.querySelectorAll('.identity-card').forEach(c => c.classList.remove('selected'));
+  const el  = document.getElementById('tokenStatus');
+  el.className = 'token-status'; el.style.display = 'block'; el.textContent = 'Signing in…';
+  try {
+    const res  = await fetch('/auth/token', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ username: id.username, password: id.password })
+    });
+    const data = await res.json();
+    bearerToken = data.access_token || '';
+    if (bearerToken) {
+      el.className = 'token-status ok';
+      el.textContent = 'Signed in. Token valid for ' + data.expires_in + 's.';
+      document.getElementById('icard-' + idx).classList.add('selected');
+      document.getElementById('mode').value = 'bearer';
+      onModeChange();
+      /* Short delay so user sees the success tick, then collapse */
+      setTimeout(() => {
+        collapseSignIn(id);
+        showGreeting(id.display, id.role);
+      }, 600);
+    } else {
+      el.className = 'token-status err';
+      el.textContent = 'Sign-in failed: ' + (data.error_description || data.detail || JSON.stringify(data));
+    }
+  } catch(e) {
+    el.className = 'token-status err'; el.textContent = 'Network error: ' + e;
+  }
+}
+
+/* ── Manual sign-in ────────────────────────────────────────────────── */
+async function doLoginManual() {
+  const payload = { username: document.getElementById('username').value, password: document.getElementById('password').value };
+  const el = document.getElementById('tokenStatus');
+  el.className = 'token-status'; el.style.display = 'block'; el.textContent = 'Signing in…';
+  try {
+    const res  = await fetch('/auth/token', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    const data = await res.json();
+    bearerToken = data.access_token || '';
+    if (bearerToken) {
+      el.className = 'token-status ok';
+      el.textContent = 'Signed in. Token valid for ' + data.expires_in + 's.';
+      document.getElementById('mode').value = 'bearer'; onModeChange();
+      const uname = payload.username.split('.')[0];
+      const dname = uname.charAt(0).toUpperCase() + uname.slice(1);
+      /* Use a generic manual-entry identity object */
+      const manualId = { initials: dname.slice(0,2).toUpperCase(), fullName: dname, friendlyRole: payload.username, avatarClass: 'av-admin' };
+      setTimeout(() => { collapseSignIn(manualId); showGreeting(dname, payload.username); }, 600);
+    } else {
+      el.className = 'token-status err';
+      el.textContent = 'Sign-in failed: ' + (data.error_description || data.detail || JSON.stringify(data));
+    }
+  } catch(e) {
+    el.className = 'token-status err'; el.textContent = 'Network error: ' + e;
+  }
+}
+
+/* ── Severity / status helpers ─────────────────────────────────────── */
+function sevClass(s) {
+  return {critical:'sev-critical',high:'sev-high',medium:'sev-medium',low:'sev-low'}[(s||'').toLowerCase()] || 'sev-low';
+}
+function statusClass(s) {
+  const v = (s||'').toLowerCase().replace(/\s+/g,'');
+  if (v === 'open')              return 'st-open';
+  if (v.includes('progress'))    return 'st-inprog';
+  if (v.includes('waiting'))     return 'st-waiting';
+  return 'st-default';
+}
+function healthClass(h) {
+  return {amber:'health-amber',green:'health-green',red:'health-red'}[(h||'').toLowerCase()] || '';
+}
+
+/* ── Build structured answer HTML ──────────────────────────────────── */
+function buildAnswer(data) {
+  const steps   = data.steps || [];
+  const profile = (steps.find(s => s.tool === 'get_customer_profile') || {}).output || null;
+  const issues  = (steps.find(s => s.tool === 'get_open_issues')      || {}).output || [];
+  const history = (steps.find(s => s.tool === 'get_issue_history')    || {}).output || [];
+  const action  = (steps.find(s => s.tool === 'recommend_next_action')|| {}).output || null;
+  const skill   = (steps.find(s => s.skill === 'customer_escalation_summary') || {}).output || null;
+
+  let html = '';
+
+  /* Query bubble */
+  if (lastQuery) {
+    html += `<div class="query-bubble"><div class="query-bubble-inner">${esc(lastQuery)}</div></div>`;
+  }
+
+  /* Narrative intro sentence */
+  if (profile) {
+    const seg    = profile.segment ? ' (' + profile.segment + ')' : '';
+    let intro    = `<strong>${esc(profile.name)}</strong>${esc(seg)}`;
+    if (issues.length > 0) {
+      intro += ` has <strong>${issues.length}</strong> open issue${issues.length !== 1 ? 's' : ''}`;
+      const high = issues.filter(i => (i.severity||'').toLowerCase() === 'high' || (i.severity||'').toLowerCase() === 'critical');
+      if (high.length) intro += ` &mdash; including ${high.length} high-severity item${high.length !== 1 ? 's' : ''}`;
+      intro += '.';
+    } else if (steps.find(s => s.tool === 'get_open_issues')) {
+      intro += ' has no open issues.';
+    } else {
+      intro += ` &middot; Account health: <strong>${esc(profile.health_status || 'unknown')}</strong>.`;
+    }
+    html += `<div class="answer-intro">${intro}</div>`;
+  }
+
+  /* Customer profile pills */
+  if (profile) {
+    const hClass = healthClass(profile.health_status);
+    html += `<div class="a-section">
+      <div class="a-label">Customer</div>
+      <div class="a-value profile-row">
+        <span class="profile-name">${esc(profile.name)}</span>
+        <span class="profile-pill">${esc(profile.segment || '—')}</span>
+        <span class="profile-pill ${hClass}">Health: ${esc(profile.health_status || 'unknown')}</span>
+        ${profile.account_owner ? `<span class="profile-pill">Owner: ${esc(profile.account_owner)}</span>` : ''}
+      </div>
+    </div>`;
+  }
+
+  /* Open issues — severity + ISS-XXXX id + status badge */
+  if (issues.length > 0) {
+    const rows = issues.map(i => `
+      <li class="issue-row">
+        <div class="issue-row-main">
+          <span class="sev ${sevClass(i.severity)}">${esc((i.severity||'?').toUpperCase())}</span>
+          <span class="issue-id-tag">${esc(issId(i.id))}</span>
+          <span class="issue-title">${esc(i.title || 'Untitled')}</span>
+        </div>
+        <span class="issue-status ${statusClass(i.status)}">${esc(i.status || 'open')}</span>
+      </li>`).join('');
+    html += `<div class="a-section">
+      <div class="a-label">Open issues (${issues.length})</div>
+      <ul class="issue-list">${rows}</ul>
+    </div>`;
+  } else if (steps.find(s => s.tool === 'get_open_issues')) {
+    html += `<div class="a-section">
+      <div class="a-label">Open issues</div>
+      <div class="a-value" style="color:#888">No open issues found.</div>
+    </div>`;
+  }
+
+  /* Latest status — clean prose, no blockquote */
+  if (history.length > 0) {
+    const latest = history[history.length - 1];
+    const note   = latest.update_text || latest.note || '—';
+    const ts     = String(latest.created_at || latest.updated_at || '').slice(0, 10);
+    const by     = latest.updated_by || '';
+    html += `<div class="a-section">
+      <div class="a-label">Latest status</div>
+      <div class="latest-status-text">${esc(note)}</div>
+      <div class="latest-status-meta">${esc(ts)}${by ? ' · ' + esc(by) : ''}</div>
+    </div>`;
+  }
+
+  /* Escalation assessment */
+  if (skill) {
+    const risk      = skill.risk_level || 'Unknown';
+    const summary   = skill.executive_summary || '';
+    const urgency   = skill.urgency || '';
+    const rationale = skill.risk_rationale || '';
+    const missing   = (skill.missing_information || []).join(', ');
+    html += `<div class="a-section">
+      <div class="a-label">Escalation assessment <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#bbb">(Customer Escalation Skill)</span></div>
+      <div class="a-value risk-row">
+        <span class="risk-pill risk-${esc(risk)}">${esc(risk)} risk</span>
+        ${urgency ? `<span style="font-size:11px;color:#888">Urgency: <strong>${esc(urgency)}</strong></span>` : ''}
+        <span class="escalation-summary">${esc(summary)}</span>
+      </div>
+      ${rationale ? `<div class="missing-info" style="margin-top:4px">${esc(rationale)}</div>` : ''}
+      ${missing   ? `<div class="missing-info">Information gaps: ${esc(missing)}</div>` : ''}
+    </div>`;
+  }
+
+  /* Recommended next action */
+  if (action) {
+    const due = action.due_date ? ' · Due: ' + esc(String(action.due_date).slice(0,10)) : '';
+    html += `<div class="a-section">
+      <div class="a-label">Recommended next action</div>
+      <div class="action-card">
+        <div class="action-label-row"><span class="action-badge">Recommended</span></div>
+        <div class="action-text">${esc(action.action_text || 'See database for details')}</div>
+        <div class="action-meta">Owner: <strong>${esc(action.owner)}</strong> · Status: ${esc(action.status)}${due}</div>
+      </div>
+    </div>`;
+  }
+
+  /* Fallback */
+  if (!profile && !issues.length && !skill && !action) {
+    html += `<div class="a-section"><div class="a-value">${esc(data.answer || 'No relevant information found.')}</div></div>`;
+  }
+
+  /* Grounded-in row */
+  const groundedParts = [];
+  if (profile && profile.name) groundedParts.push({ label: profile.name, dot: '#4d7fd4' });
+  issues.forEach(i => { if (i.id) groundedParts.push({ label: issId(i.id), dot: '#6b7280' }); });
+  if (groundedParts.length) {
+    const pills = groundedParts.map(p =>
+      `<span class="grounded-pill"><span class="gpill-dot" style="background:${p.dot}"></span>${esc(p.label)}</span>`
+    ).join('');
+    html += `<div class="grounded-row"><span class="grounded-label">Grounded in</span>${pills}</div>`;
+  }
+
+  return html;
+}
+
+/* ── Build technical trace ─────────────────────────────────────────── */
+function buildTrace(data, elapsedSec) {
+  const u        = data.user || {};
+  const authMode = u.auth_mode || 'unknown';
+  const planMode = (data.plan || {}).planner_mode || 'unknown';
+  const roles    = (u.roles || []).join(', ') || u.username || '';
+  const history  = (data.session_context || {}).history || [];
+  const steps    = data.steps || [];
+  const toolSteps = steps.filter(s => s.tool);
+  const skillStep = steps.find(s => s.skill);
+
+  const toolCount = toolSteps.length + (skillStep ? 1 : 0);
+  const timeStr   = elapsedSec != null ? ' · ' + elapsedSec + ' s' : '';
+  document.getElementById('traceLabel').textContent =
+    'Agent trace · ' + toolCount + ' tool call' + (toolCount !== 1 ? 's' : '') + timeStr;
+
+  const authBadge = authMode === 'bearer_token' ? 'b-auth' : 'b-local';
+  document.getElementById('badgeRow').innerHTML =
+    `<span class="badge ${authBadge}">${esc(authMode)}</span>` +
+    `<span class="badge b-role">${esc(roles)}</span>` +
+    `<span class="badge b-planner">planner: ${esc(planMode)}</span>` +
+    `<span class="badge b-session">session: ${history.length} event(s)</span>`;
+
+  let chain = toolSteps.map((s, i) =>
+    (i ? '<span class="tool-arrow">→</span>' : '') +
+    `<span class="tool-node">${esc(s.tool)}</span>`
+  ).join('');
+  if (skillStep) {
+    chain += (chain ? '<span class="tool-arrow">→</span>' : '') +
+      `<span class="tool-node tool-skill">skill:${esc(skillStep.skill)}</span>`;
+  }
+  document.getElementById('toolChain').innerHTML = chain ||
+    '<span style="color:#aaa;font-size:12px">No tools executed</span>';
+
+  document.getElementById('mcpNote').innerHTML = toolSteps.length
+    ? `<strong>MCP integration:</strong> <code>get_customer_profile</code> and <code>get_open_issues</code>
+       execute through the MCP server at <a href="http://localhost:8100/tools" target="_blank">:8100</a>.
+       The <code>via</code> field in app logs shows <em>mcp</em>, <em>cache</em>, or <em>direct_db_fallback</em>.
+       <a href="/docs" target="_blank">API docs →</a>`
+    : '';
+
+  document.getElementById('reasoningText').textContent =
+    (data.plan || {}).reasoning || '(rule-based planner — no LLM reasoning step)';
+
+  const sid   = document.getElementById('session').value;
+  const prior = history.slice(0, -1).map(e =>
+    '"' + String(e.query || '').slice(0, 50) + (String(e.query||'').length > 50 ? '…' : '') + '"'
+  );
+  let sessText = `Session ID: ${sid}\nEvents stored in Redis: ${history.length} (TTL 1 hour)`;
+  if (prior.length) sessText += `\nPrior queries in this session:\n  ${prior.join('\n  ')}`;
+  document.getElementById('sessionText').textContent = sessText;
+
+  document.getElementById('rawJson').textContent = JSON.stringify(data, null, 2);
+}
+
+/* ── Trace toggle ──────────────────────────────────────────────────── */
+function toggleTrace() {
+  const panel = document.getElementById('tracePanel');
+  const arrow = document.getElementById('traceArrow');
+  arrow.classList.toggle('open', panel.classList.toggle('open'));
+}
+
+/* ── Error display ─────────────────────────────────────────────────── */
+function showError(title, msg, detail) {
+  document.getElementById('errorTitle').textContent  = title;
+  document.getElementById('errorMsg').textContent    = msg;
+  document.getElementById('errorDetail').textContent = detail || '';
+  show('errorBox');
+}
+
+/* ── Main query handler ────────────────────────────────────────────── */
+async function doQuery() {
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true;
+  startLoad();
+  hide('errorBox');
+  hide('answerArea');
+
+  lastQuery = document.getElementById('query').value;
+  const t0  = Date.now();
+
+  const payload = { user_query: lastQuery, session_id: document.getElementById('session').value };
+  const headers = { 'Content-Type': 'application/json' };
+  const mode    = document.getElementById('mode').value;
+  if (mode === 'bearer' && bearerToken) {
+    headers['Authorization'] = 'Bearer ' + bearerToken;
+  } else {
+    headers['x-role'] = document.getElementById('role').value;
+    headers['x-user'] = 'demo.' + document.getElementById('role').value;
+  }
+
+  let data, res;
+  try {
+    res  = await fetch('/query', { method:'POST', headers, body: JSON.stringify(payload) });
+    data = await res.json();
+  } catch(e) {
+    stopLoad(); btn.disabled = false;
+    showError('Network error', 'Could not reach the assistant. Is the app running?', String(e));
+    hide('emptyState');
+    return;
+  }
+
+  const elapsedSec = ((Date.now() - t0) / 1000).toFixed(1);
+  stopLoad(); btn.disabled = false;
+  hide('emptyState');
+  show('traceWrap');
+  buildTrace(data, elapsedSec);
+
+  if (data.answer) {
+    document.getElementById('answerBody').innerHTML = buildAnswer(data);
+    show('answerArea');
+  } else {
+    let title = 'Request failed', msg = data.detail || 'Unexpected error.', detail = 'HTTP ' + res.status;
+    if (res.status === 403) {
+      title  = 'Access denied (403)';
+      msg    = 'Your role does not have permission for this action. Try a read-only query, or sign in as Sam Okafor or Alex Morgan for full access.';
+      detail = data.detail || '';
+    } else if (res.status === 401) {
+      title  = 'Authentication required (401)';
+      msg    = 'Your session has expired or the token is invalid. Please sign in again.';
+      detail = data.detail || '';
+    }
+    showError(title, msg, detail);
+  }
+}
+</script>
+</body>
+</html>
