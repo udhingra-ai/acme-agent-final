@@ -3,7 +3,7 @@ from core.config import MCP_SERVER_URL
 from repositories.customer_repo import get_customer_by_name, resolve_customer_name
 from repositories.issue_repo import get_open_issues_for_customer, get_issue_history, create_next_action
 from services.memory_service import get_cached_customer_profile, cache_customer_profile
-from observability.logging_utils import log_event
+from observability.logging_utils import log_event, timed
 
 
 def _mcp_get(path: str):
@@ -22,6 +22,7 @@ def _mcp_get(path: str):
     return None
 
 
+@timed
 def tool_get_customer_profile(customer_name: str):
     # Resolve fuzzy/partial name to canonical DB name before any lookup
     canonical = resolve_customer_name(customer_name)
@@ -51,6 +52,7 @@ def tool_get_customer_profile(customer_name: str):
     return data or None
 
 
+@timed
 def tool_get_open_issues(customer_name: str):
     # Resolve fuzzy/partial name to canonical DB name
     canonical = resolve_customer_name(customer_name)
@@ -70,11 +72,13 @@ def tool_get_open_issues(customer_name: str):
     return issues
 
 
+@timed
 def tool_get_issue_history(issue_id: int):
     log_event('tool_call', {'tool': 'get_issue_history', 'via': 'direct_db', 'issue_id': issue_id})
     return get_issue_history(issue_id)
 
 
+@timed
 def tool_list_all_open_issues(severity: str = None, statuses: list = None):
     from repositories.issue_repo import get_all_issues_filtered
     effective_statuses = statuses if statuses else ['open', 'in_progress']
@@ -82,6 +86,7 @@ def tool_list_all_open_issues(severity: str = None, statuses: list = None):
     return get_all_issues_filtered(statuses=effective_statuses, severity=severity)
 
 
+@timed
 def tool_recommend_next_action(issue_id: int, username: str):
     action_text = 'Validate mapping rules, confirm impact, and send customer update by end of next business day.'
     log_event('tool_call', {'tool': 'recommend_next_action', 'via': 'direct_db', 'issue_id': issue_id, 'owner': username})

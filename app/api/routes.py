@@ -38,17 +38,17 @@ def login_via_keycloak(request: LoginRequest):
         raise HTTPException(status_code=401, detail=f'Login failed: {e}')
 
 @router.get('/customers')
-def list_customers_route():
+def list_customers_route(user_ctx: dict = Depends(get_user_context)):
     from repositories.customer_repo import list_all_customers
     return list_all_customers()
 
 @router.get('/issues')
-def list_issues_route():
+def list_issues_route(user_ctx: dict = Depends(get_user_context)):
     from repositories.issue_repo import list_all_issues
     return list_all_issues()
 
 @router.get('/issues/{issue_id}/history')
-def get_issue_history_route(issue_id: int):
+def get_issue_history_route(issue_id: int, user_ctx: dict = Depends(get_user_context)):
     from repositories.issue_repo import get_issue_history, list_next_actions_for_issue
     return {
         'history': get_issue_history(issue_id),
@@ -56,7 +56,7 @@ def get_issue_history_route(issue_id: int):
     }
 
 @router.get('/evals')
-def get_evals_route():
+def get_evals_route(user_ctx: dict = Depends(get_user_context)):
     candidates = [
         '/evals/reports/results.json',
         os.path.abspath(os.path.join(os.path.dirname(__file__), '../../evals/reports/results.json')),
@@ -71,8 +71,10 @@ def get_evals_route():
 
 
 @router.post('/evals/run')
-def run_evals_live():
-    """Run the evaluation suite live, streaming one SSE event per completed test case."""
+def run_evals_live(user_ctx: dict = Depends(get_user_context)):
+    """Run the evaluation suite live, streaming one SSE event per completed test case. Admin only."""
+    from auth.security import require_role
+    require_role(user_ctx, ['admin'])
     tests = None
     for path in _YAML_PATHS:
         try:

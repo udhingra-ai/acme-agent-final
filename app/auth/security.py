@@ -2,7 +2,10 @@ from typing import List, Optional
 from fastapi import Header, HTTPException
 from jose import jwt
 import httpx
-from core.config import KEYCLOAK_JWKS_URL, KEYCLOAK_CLIENT_ID, APP_ENV
+from core.config import KEYCLOAK_JWKS_URL, KEYCLOAK_CLIENT_ID, APP_ENV, KEYCLOAK_SERVER_URL, KEYCLOAK_REALM
+
+# Derived at import time so it never needs passing as an argument
+KEYCLOAK_ISSUER = f'{KEYCLOAK_SERVER_URL}/realms/{KEYCLOAK_REALM}'
 
 _jwks_cache = None
 
@@ -25,7 +28,7 @@ def _decode_token(token: str):
     key = next((k for k in keys if k.get('kid') == kid), None)
     if not key:
         raise HTTPException(status_code=401, detail='Unable to find signing key')
-    return jwt.decode(token, key, algorithms=[unverified.get('alg', 'RS256')], options={"verify_aud": False})
+    return jwt.decode(token, key, algorithms=['RS256'], issuer=KEYCLOAK_ISSUER, options={"verify_aud": False})
 
 
 def _roles_from_claims(claims: dict) -> List[str]:

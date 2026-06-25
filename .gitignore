@@ -23,8 +23,8 @@ web/node_modules/
 web/dist/
 web/.vite/
 
-# Eval reports (generated output, not source)
-evals/reports/
+# Eval reports — results.json is committed; only large run artifacts are excluded
+evals/reports/*.log
 
 # Logs
 *.log

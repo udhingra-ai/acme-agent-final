@@ -15,7 +15,7 @@ A production-pattern agentic assistant for enterprise operations teams.
 | Redis | Session history (1 h TTL) + profile cache (15 min TTL) | `app/services/memory_service.py` | `docker exec acme-redis redis-cli KEYS "*"` |
 | MCP server | Tool registry at `:8100/tools`; customer lookup endpoint | `mcp_server/server.py` | `curl http://localhost:8100/tools` |
 | Reusable Skill | Customer Escalation Skill — deterministic risk rubric | `app/skills/customer_escalation.py` | `steps[].skill` in `/query` response |
-| Docker Compose | Single command; 5 services | `docker-compose.yml` | `docker compose ps` |
+| Docker Compose | Single command; 6 services (nginx, app, postgres, redis, keycloak, mcp-server) | `docker-compose.yml` | `docker compose ps` |
 | Evaluation | 10 test cases; tool_match, status_match, grounded, latency | `evals/` | `python evals/runner.py` |
 | Observability | Structured JSON: tool_call, request_trace, timing | `app/observability/` | `docker compose logs -f app` |
 

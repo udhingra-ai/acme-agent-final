@@ -37,8 +37,9 @@ flowchart TD
     PLAN -->|"tool plan\n{steps, reasoning}"| AG
     AG -->|"RBAC check before\neach tool call"| AG
     AG --> SK
-    AG -->|"direct DB call\n(prototype trade-off)"| PG
-    MCP -->|"canonical definitions"| PG
+    AG -->|"read tools via MCP\n(3s timeout → direct DB fallback)"| MCP
+    AG -->|"write tools direct DB\n(RBAC enforced before call)"| PG
+    MCP -->|"canonical definitions\nand read execution"| PG
     APP --> RD
     APP --> OBS
     EV -->|"x-role header\nlocal override"| APP

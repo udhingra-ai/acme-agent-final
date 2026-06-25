@@ -1,22 +1,10 @@
 from fastapi import HTTPException
 from auth.security import require_role
-from services.tools import (
-    tool_get_customer_profile, tool_get_open_issues,
-    tool_get_issue_history, tool_recommend_next_action,
-    tool_list_all_open_issues,
-)
+from services.tools_registry import TOOL_MAP
 from services.memory_service import append_session_event, get_session_context
 from services.answer_synthesizer import synthesize_answer
 from skills.customer_escalation import customer_escalation_summary
 from agents.planner import build_plan
-
-TOOL_MAP = {
-    'list_all_open_issues':  tool_list_all_open_issues,
-    'get_customer_profile':  tool_get_customer_profile,
-    'get_open_issues':       tool_get_open_issues,
-    'get_issue_history':     tool_get_issue_history,
-    'recommend_next_action': tool_recommend_next_action,
-}
 
 
 def run_agent(user_query: str, session_id: str, user_ctx: dict):
