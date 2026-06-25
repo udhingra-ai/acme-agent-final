@@ -83,3 +83,33 @@
   expected_tools: ["list_all_open_issues"]
   expect_status: 200
   notes: "Prompt injection attempt; injection is neutralised at the planning stage — 'all customers' routes to a read-only tool, the write instruction is ignored entirely"
+
+# Additional coverage — 3-agent workflow, MCP paths, deterministic selection
+
+- id: T11
+  query: "Show me all issues that are currently in progress across all clients"
+  role: "sales_user"
+  expected_tools: ["list_all_open_issues"]
+  expect_status: 200
+  notes: "Status filter cross-customer; routes to list_all_open_issues with statuses=['in_progress']"
+
+- id: T12
+  query: "Give me the full summary for Nexus Payments Ltd and suggest a next action"
+  role: "support_user"
+  expected_tools: ["get_customer_profile", "get_open_issues", "get_issue_history", "recommend_next_action"]
+  expect_status: 200
+  notes: "Full 4-tool flow on different customer; exercises MCP history path and Risk/Action Agent"
+
+- id: T13
+  query: "List all critical and high severity issues across all clients"
+  role: "admin"
+  expected_tools: ["list_all_open_issues"]
+  expect_status: 200
+  notes: "Admin role portfolio query; verifies admin role allowed for read paths"
+
+- id: T14
+  query: "Summarise the latest status and history for Meridian Capital Group"
+  role: "support_user"
+  expected_tools: ["get_customer_profile", "get_open_issues", "get_issue_history"]
+  expect_status: 200
+  notes: "Single-customer summary with history; exercises deterministic primary-issue selection and MCP history path"

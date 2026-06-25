@@ -1,14 +1,30 @@
+import uuid
 from fastapi import HTTPException
 from auth.security import require_role
 from services.tools_registry import TOOL_MAP
-from services.memory_service import append_session_event, get_session_context
+from services.memory_service import append_session_event
 from services.answer_synthesizer import synthesize_answer
-from skills.customer_escalation import customer_escalation_summary
+from agents.risk_action_agent import run_risk_action_agent, select_primary_issue
 from agents.planner import build_plan
+from observability.logging_utils import log_event
 
 
 def run_agent(user_query: str, session_id: str, user_ctx: dict):
+    trace_id = str(uuid.uuid4())[:8]
+
+    # ── Agent 1: Planning Agent ───────────────────────────────────────────
     plan = build_plan(user_query, user_ctx['roles'])
+    log_event('agent_output', {
+        'agent_stage': 'planning_agent',
+        'trace_id': trace_id,
+        'planner_mode': plan.get('planner_mode'),
+        'customer_name': plan.get('customer_name', ''),
+        'selected_tools': [s.get('tool') for s in plan.get('steps', [])],
+        'reasoning': plan.get('reasoning', ''),
+        'role': user_ctx.get('roles', []),
+        'auth_mode': user_ctx.get('auth_mode'),
+    })
+
     customer_name = plan.get('customer_name', '')
     steps = []
 
@@ -18,6 +34,9 @@ def run_agent(user_query: str, session_id: str, user_ctx: dict):
     next_action = None
     all_issues = []
 
+    # ── Tool Execution (orchestrator/app layer) ───────────────────────────
+    # Tool calls are always dispatched here, never by LLMs directly.
+    # RBAC is enforced here before write tools are invoked.
     for planned_step in plan['steps']:
         tool_name = planned_step['tool']
 
@@ -39,34 +58,65 @@ def run_agent(user_query: str, session_id: str, user_ctx: dict):
         elif tool_name == 'get_issue_history':
             if not issues:
                 continue
-            issue_history = TOOL_MAP[tool_name](issues[0]['id'])
-            steps.append({'tool': tool_name, 'args': {'issue_id': issues[0]['id']}, 'output': issue_history})
+            primary = select_primary_issue(issues)
+            issue_history = TOOL_MAP[tool_name](primary['id'])
+            steps.append({'tool': tool_name, 'args': {'issue_id': primary['id']}, 'output': issue_history})
 
         elif tool_name == 'recommend_next_action':
             require_role(user_ctx, ['support_user', 'admin'])
             if not issues:
                 raise HTTPException(status_code=400, detail='No issue available for next action')
-            next_action = TOOL_MAP[tool_name](issues[0]['id'], user_ctx['username'])
-            steps.append({'tool': tool_name, 'args': {'issue_id': issues[0]['id'], 'owner': user_ctx['username']}, 'output': next_action})
+            primary = select_primary_issue(issues)
+            next_action = TOOL_MAP[tool_name](primary['id'], user_ctx['username'])
+            steps.append({
+                'tool': tool_name,
+                'args': {'issue_id': primary['id'], 'owner': user_ctx['username']},
+                'output': next_action,
+            })
 
-    # Escalation skill — single-customer only
-    skill_output = None
+    # ── Agent 2: Risk/Action Agent (single-customer only) ─────────────────
+    # Runs when we have grounded customer data. Produces deterministic risk
+    # assessment and explicit primary-issue selection. Does not write.
+    risk_action_output = None
     if issues or profile:
-        skill_output = customer_escalation_summary(customer_name, profile or {}, issues, issue_history)
-        steps.append({'skill': 'customer_escalation_summary', 'output': skill_output})
+        risk_action_output = run_risk_action_agent(
+            customer_name, profile or {}, issues, issue_history, trace_id=trace_id
+        )
+        steps.append({'skill': 'risk_action_agent', 'output': risk_action_output})
 
-    # Try LLM synthesis; fall back to deterministic string building if unavailable
-    final = synthesize_answer(user_query, steps, escalation=skill_output, next_action=next_action)
+    # ── Agent 3: Response Agent ────────────────────────────────────────────
+    # Consumes grounded tool outputs + Risk/Action Agent structured output.
+    # Produces the final user-facing answer. Falls back to deterministic
+    # rule-based synthesis if the LLM is unavailable.
+    final = synthesize_answer(
+        user_query, steps,
+        escalation=risk_action_output,
+        next_action=next_action,
+        trace_id=trace_id,
+    )
 
     if not final:
-        final = _rule_based_answer(plan, all_issues, profile, issues, issue_history, skill_output, next_action)
+        final = _rule_based_answer(plan, all_issues, profile, issues, issue_history, risk_action_output, next_action)
 
-    event = {'query': user_query, 'plan': plan, 'steps': steps, 'answer': final, 'auth_mode': user_ctx.get('auth_mode')}
+    event = {
+        'query': user_query,
+        'plan': plan,
+        'steps': steps,
+        'answer': final,
+        'auth_mode': user_ctx.get('auth_mode'),
+        'trace_id': trace_id,
+    }
     session_state = append_session_event(session_id, event)
-    return {'answer': final, 'plan': plan, 'steps': steps, 'session_context': session_state}
+    return {
+        'answer': final,
+        'plan': plan,
+        'steps': steps,
+        'session_context': session_state,
+        'trace_id': trace_id,
+    }
 
 
-def _rule_based_answer(plan, all_issues, profile, issues, issue_history, skill_output, next_action) -> str:
+def _rule_based_answer(plan, all_issues, profile, issues, issue_history, risk_action_output, next_action) -> str:
     """Deterministic fallback when LLM synthesizer is unavailable."""
     answer_parts = []
 
@@ -106,13 +156,13 @@ def _rule_based_answer(plan, all_issues, profile, issues, issue_history, skill_o
         by = latest.get('updated_by', '')
         answer_parts.append(f"Latest update on #{issues[0]['id'] if issues else '?'} ({ts}, {by}): \"{note}\"")
 
-    if skill_output:
-        risk = skill_output.get('risk_level', 'Unknown')
-        urgency = skill_output.get('urgency', '')
-        rationale = skill_output.get('risk_rationale', '')
-        missing = ', '.join(skill_output.get('missing_information', []))
+    if risk_action_output:
+        risk = risk_action_output.get('risk_level', 'Unknown')
+        urgency = risk_action_output.get('urgency', '')
+        rationale = risk_action_output.get('rationale', '')
+        missing = ', '.join(risk_action_output.get('missing_information', []))
         urgency_str = f" — urgency: {urgency}" if urgency else ""
-        answer_parts.append(f"Escalation risk: **{risk}**{urgency_str}. {skill_output['executive_summary']}")
+        answer_parts.append(f"Escalation risk: **{risk}**{urgency_str}. {risk_action_output['executive_summary']}")
         if rationale:
             answer_parts.append(f"Risk rationale: {rationale}.")
         if missing:

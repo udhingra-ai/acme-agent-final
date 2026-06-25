@@ -9,15 +9,17 @@ A production-pattern agentic assistant for enterprise operations teams.
 | Brief requirement | Implementation | Evidence | How to verify |
 |---|---|---|---|
 | Keycloak authentication | JWT bearer token flow; realm import at startup | `keycloak/realm-export.json`, `app/auth/security.py` | `curl POST /auth/token` |
-| Role-based access control | Server-side `require_role()` in orchestrator | `app/agents/orchestrator.py:42` | `sales_user` + write query → 403 |
+| Role-based access control | Server-side `require_role()` in orchestrator | `app/agents/orchestrator.py` | `sales_user` + write query → 403 |
+| Bounded 3-agent workflow | Planning → Risk/Action → Response agents with clear boundaries | `app/agents/` | `agent_stage` fields in logs |
 | Dynamic LLM tool use | OpenAI planner + rule-based fallback | `app/agents/planner.py` | `planner_mode` field in response |
+| Deterministic primary-issue selection | Severity → status → newest ID | `app/agents/risk_action_agent.py` | `selected_primary_issue` in response steps |
 | PostgreSQL | 5 tables, parameterised queries, seed data | `db/init/`, `app/repositories/` | `docker exec acme-postgres psql …` |
 | Redis | Session history (1 h TTL) + profile cache (15 min TTL) | `app/services/memory_service.py` | `docker exec acme-redis redis-cli KEYS "*"` |
-| MCP server | Tool registry at `:8100/tools`; customer lookup endpoint | `mcp_server/server.py` | `curl http://localhost:8100/tools` |
-| Reusable Skill | Customer Escalation Skill — deterministic risk rubric | `app/skills/customer_escalation.py` | `steps[].skill` in `/query` response |
+| MCP server | Tool registry + 4 read endpoints | `mcp_server/server.py` | `curl http://localhost:8100/tools` |
+| Reusable Skill | Customer Escalation Skill — deterministic risk rubric | `app/skills/customer_escalation.py` | `skill: risk_action_agent` in response steps |
 | Docker Compose | Single command; 6 services (nginx, app, postgres, redis, keycloak, mcp-server) | `docker-compose.yml` | `docker compose ps` |
-| Evaluation | 10 test cases; tool_match, status_match, grounded, latency | `evals/` | `python evals/runner.py` |
-| Observability | Structured JSON: tool_call, request_trace, timing | `app/observability/` | `docker compose logs -f app` |
+| Evaluation | 14 test cases; tool_match, status_match, grounded, latency | `evals/` | `python evals/runner.py` |
+| Observability | Structured JSON: agent_output (trace_id), tool_call (via), request_trace | `app/observability/` | `docker compose logs -f app` |
 
 ---
 
@@ -130,25 +132,40 @@ curl -X POST http://localhost:8000/query \
 
 See [`docs/architecture.md`](docs/architecture.md) for the full diagram and component table.
 
-**Short summary:**
+**Bounded 3-agent workflow:**
 
 ```
 User → nginx :443 (TLS) → FastAPI app :8000 → JWT validation + RBAC
-                                             → LLM Planner (OpenAI or rule fallback)
-                                             → Tool Orchestrator
-                                                 → get_customer_profile  (Redis cache → MCP :8100 → DB fallback)
-                                                 → get_open_issues       (MCP :8100 → DB fallback)
-                                                 → get_issue_history     (→ PostgreSQL direct)
-                                                 → recommend_next_action (→ PostgreSQL, role-gated)
-                                             → Customer Escalation Skill (stateless)
-                                             → Redis session + cache write
+                                             ↓
+                                [Agent 1 — Planning Agent]
+                                  OpenAI LLM → structured plan {steps, reasoning}
+                                  (rule-based fallback if LLM unavailable)
+                                             ↓
+                                [Tool Execution — orchestrator/app layer]
+                                  RBAC enforced here (not by LLMs)
+                                  → get_customer_profile  (Redis cache → MCP → DB fallback)
+                                  → get_open_issues       (MCP → DB fallback)
+                                  → get_issue_history     (MCP → DB fallback)
+                                  → list_all_open_issues  (MCP → DB fallback)
+                                  → recommend_next_action (direct DB, role-gated)
+                                             ↓
+                                [Agent 2 — Risk/Action Agent]
+                                  Deterministic primary-issue selection
+                                  Risk rubric (severity, health, staleness)
+                                  Structured output {selected_primary_issue, risk_level, urgency}
+                                             ↓
+                                [Agent 3 — Response Agent]
+                                  LLM synthesis (or rule-based fallback)
+                                  Never invents facts outside tool outputs
+                                             ↓
+                                  Redis session write + structured log with trace_id
 ```
 
 6 services: nginx (TLS), app, postgres, redis, keycloak, mcp-server.
 
 ### MCP server
 
-The MCP server at `:8100` exposes the canonical tool registry (`GET /tools`), customer lookup (`GET /customer/{name}`), and open issues (`GET /issues/{name}`). `get_customer_profile` and `get_open_issues` execute through MCP with a 3 s timeout and automatic direct-DB fallback. The `via` field in `tool_call` log events shows `"mcp"`, `"cache"`, or `"direct_db_fallback"` per request. See `docs/architecture.md` for the full routing diagram.
+The MCP server at `:8100` exposes the canonical tool registry (`GET /tools`) and 4 read endpoints: `GET /customer/{name}`, `GET /issues/{name}`, `GET /history/{issue_id}`, and `GET /issues?severity=&statuses=`. All read tools attempt MCP first (3 s timeout) and fall back to direct PostgreSQL on failure. The `via` field in `tool_call` log events shows `"mcp"`, `"cache"`, or `"direct_db_fallback"` per request. See `docs/architecture.md` for the full routing diagram.
 
 ---
 
@@ -162,7 +179,7 @@ pip install -r evals/requirements.txt
 python evals/runner.py
 ```
 
-Results are written to `evals/reports/results.json`. Expected: **10/10 tool_match, 10/10 status_match, 10/10 grounded**.
+Results are written to `evals/reports/results.json`. Expected: **14/14 tool_match, 14/14 status_match, 14/14 grounded**.
 
 ---
 
@@ -170,14 +187,17 @@ Results are written to `evals/reports/results.json`. Expected: **10/10 tool_matc
 
 Every request emits structured JSON logs to stdout:
 
-- `request_trace` — path, method, trace_id, elapsed_ms
-- `tool_call` — tool name, arguments, cache hit/miss
+- `agent_output` — agent stage (`planning_agent` / `risk_action_agent` / `response_agent`), `trace_id`, key outputs
+- `tool_call` — tool name, `via` (`mcp` / `cache` / `direct_db_fallback`), latency
+- `request_trace` — path, method, elapsed_ms
 - `timing` — function-level latency (via `@timed` decorator)
 
-Example:
+Example (single request, trace_id threads all 3 agent stages):
 ```json
-{"ts":"2026-06-22T09:31:20","kind":"tool_call","payload":{"tool":"get_customer_profile","cached":true,"customer_name":"Pinnacle Bancorp"}}
-{"ts":"2026-06-22T09:31:20","kind":"request_trace","payload":{"path":"/query","method":"POST","trace_id":"...","elapsed_ms":178}}
+{"ts":"2026-06-25T13:13:38","kind":"agent_output","payload":{"agent_stage":"planning_agent","trace_id":"cbcc32f7","planner_mode":"llm","selected_tools":["get_customer_profile","get_open_issues"]}}
+{"ts":"2026-06-25T13:13:38","kind":"tool_call","payload":{"tool":"get_customer_profile","via":"mcp","customer_name":"Pinnacle Bancorp"}}
+{"ts":"2026-06-25T13:13:38","kind":"agent_output","payload":{"agent_stage":"risk_action_agent","trace_id":"cbcc32f7","primary_issue_id":1,"risk_level":"Critical","urgency":"immediate"}}
+{"ts":"2026-06-25T13:13:41","kind":"agent_output","payload":{"agent_stage":"response_agent","trace_id":"cbcc32f7","via":"llm","model":"gpt-4.1-mini"}}
 ```
 
 View live: `docker compose logs -f app`

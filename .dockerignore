@@ -1,0 +1,12 @@
+.git/
+.claude/
+.env
+web/node_modules/
+web/dist/
+__pycache__/
+*.py[cod]
+.DS_Store
+evals/reports/
+postgres_data/
+redis_data/
+keycloak_data/

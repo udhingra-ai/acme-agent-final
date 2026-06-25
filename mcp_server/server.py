@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 from fastapi import FastAPI
 from sqlalchemy import create_engine, text
 
@@ -11,10 +12,11 @@ def list_tools():
     """Canonical tool registry — single source of truth for tool names and descriptions."""
     return {
         'tools': [
-            {'name': 'get_customer_profile',  'description': 'Retrieve customer profile using customer name',       'endpoint': 'GET /customer/{customer_name}'},
-            {'name': 'get_open_issues',        'description': 'Retrieve open issues for a customer',                'endpoint': 'GET /issues/{customer_name}'},
-            {'name': 'get_issue_history',      'description': 'Summarise issue history for a specific issue',       'endpoint': '(direct DB — not yet routed via MCP)'},
-            {'name': 'recommend_next_action',  'description': 'Create a recommended next action for an issue',      'endpoint': '(direct DB — write tool, app-layer RBAC required)'},
+            {'name': 'get_customer_profile',  'description': 'Retrieve customer profile using customer name',      'endpoint': 'GET /customer/{customer_name}'},
+            {'name': 'get_open_issues',        'description': 'Retrieve open issues for a customer',               'endpoint': 'GET /issues/{customer_name}'},
+            {'name': 'get_issue_history',      'description': 'Summarise issue history for a specific issue',      'endpoint': 'GET /history/{issue_id}'},
+            {'name': 'list_all_open_issues',   'description': 'Portfolio-wide issue list with optional filters',   'endpoint': 'GET /issues?severity=&statuses='},
+            {'name': 'recommend_next_action',  'description': 'Create a recommended next action for an issue',     'endpoint': '(direct DB — write tool, app-layer RBAC required)'},
         ]
     }
 
@@ -31,7 +33,7 @@ def get_customer(customer_name: str):
 
 
 @app.get('/issues/{customer_name}')
-def get_open_issues(customer_name: str):
+def get_open_issues_for_customer(customer_name: str):
     """Return all open issues for a customer. Returns {issues: []} if none found."""
     with engine.begin() as conn:
         rows = conn.execute(
@@ -45,4 +47,59 @@ def get_open_issues(customer_name: str):
             '''),
             {'name': customer_name}
         ).mappings().all()
+        return {'issues': [dict(r) for r in rows]}
+
+
+@app.get('/history/{issue_id}')
+def get_issue_history(issue_id: int):
+    """Return update history for a specific issue. Returns {history: []} if none found."""
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text('''
+                SELECT issue_id, update_text, updated_by, created_at
+                FROM issue_updates
+                WHERE issue_id = :id
+                ORDER BY created_at
+            '''),
+            {'id': issue_id}
+        ).mappings().all()
+        return {'history': [dict(r) for r in rows]}
+
+
+@app.get('/issues')
+def list_issues_filtered(severity: Optional[str] = None, statuses: Optional[str] = None):
+    """
+    Portfolio-wide issue list with optional filters.
+    severity: optional (critical|high|medium|low)
+    statuses: optional comma-separated list (open,in_progress,waiting,resolved)
+              defaults to open,in_progress if omitted
+    """
+    status_list = [s.strip() for s in statuses.split(',')] if statuses else ['open', 'in_progress']
+
+    conditions = []
+    params: dict = {}
+
+    if status_list:
+        placeholders = ', '.join(f':s{i}' for i in range(len(status_list)))
+        conditions.append(f'LOWER(i.status) IN ({placeholders})')
+        for i, s in enumerate(status_list):
+            params[f's{i}'] = s.lower()
+
+    if severity:
+        conditions.append('LOWER(i.severity) = :severity')
+        params['severity'] = severity.lower()
+
+    where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
+    sql = f'''
+        SELECT i.id, i.title, i.severity, i.status, i.created_at,
+               c.name AS customer_name, c.health_status
+        FROM issues i
+        JOIN customers c ON i.customer_id = c.id
+        {where}
+        ORDER BY
+            CASE LOWER(i.severity) WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+            c.name
+    '''
+    with engine.begin() as conn:
+        rows = conn.execute(text(sql), params).mappings().all()
         return {'issues': [dict(r) for r in rows]}

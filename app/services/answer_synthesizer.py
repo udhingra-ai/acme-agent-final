@@ -51,6 +51,7 @@ def synthesize_answer(
     tool_outputs: list,
     escalation: dict | None = None,
     next_action: dict | None = None,
+    trace_id: str = '',
 ) -> str | None:
     """
     Call GPT to generate a natural-language answer from structured tool outputs.
@@ -74,9 +75,20 @@ def synthesize_answer(
             ],
         )
         answer = resp.choices[0].message.content.strip()
-        log_event('synthesizer', {'via': 'llm', 'model': OPENAI_MODEL,
-                                   'input_chars': len(context), 'output_chars': len(answer)})
+        log_event('agent_output', {
+            'agent_stage': 'response_agent',
+            'trace_id': trace_id,
+            'via': 'llm',
+            'model': OPENAI_MODEL,
+            'input_chars': len(context),
+            'output_chars': len(answer),
+        })
         return answer
     except Exception as exc:
-        log_event('synthesizer', {'via': 'llm', 'error': str(exc)})
+        log_event('agent_output', {
+            'agent_stage': 'response_agent',
+            'trace_id': trace_id,
+            'via': 'rule_fallback',
+            'error': str(exc),
+        })
         return None

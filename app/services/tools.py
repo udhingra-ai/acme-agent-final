@@ -74,16 +74,36 @@ def tool_get_open_issues(customer_name: str):
 
 @timed
 def tool_get_issue_history(issue_id: int):
-    log_event('tool_call', {'tool': 'get_issue_history', 'via': 'direct_db', 'issue_id': issue_id})
-    return get_issue_history(issue_id)
+    mcp_result = _mcp_get(f'/history/{issue_id}')
+    if mcp_result is not None:
+        history = mcp_result.get('history', [])
+        via = 'mcp'
+    else:
+        history = get_issue_history(issue_id)
+        via = 'direct_db_fallback'
+    log_event('tool_call', {'tool': 'get_issue_history', 'via': via, 'issue_id': issue_id})
+    return history
 
 
 @timed
 def tool_list_all_open_issues(severity: str = None, statuses: list = None):
     from repositories.issue_repo import get_all_issues_filtered
     effective_statuses = statuses if statuses else ['open', 'in_progress']
-    log_event('tool_call', {'tool': 'list_all_open_issues', 'via': 'direct_db', 'severity': severity, 'statuses': effective_statuses})
-    return get_all_issues_filtered(statuses=effective_statuses, severity=severity)
+
+    qs_parts = ['statuses=' + ','.join(effective_statuses)]
+    if severity:
+        qs_parts.append(f'severity={severity}')
+    mcp_result = _mcp_get(f'/issues?{"&".join(qs_parts)}')
+
+    if mcp_result is not None:
+        issues = mcp_result.get('issues', [])
+        via = 'mcp'
+    else:
+        issues = get_all_issues_filtered(statuses=effective_statuses, severity=severity)
+        via = 'direct_db_fallback'
+
+    log_event('tool_call', {'tool': 'list_all_open_issues', 'via': via, 'severity': severity, 'statuses': effective_statuses})
+    return issues
 
 
 @timed
