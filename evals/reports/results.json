@@ -4,8 +4,8 @@
     "tool_match_count": 16,
     "status_match_count": 16,
     "grounded_count": 16,
-    "total_latency_ms": 59038,
-    "avg_latency_ms": 3690,
+    "total_latency_ms": 59825,
+    "avg_latency_ms": 3739,
     "verdict": "PASS"
   },
   "results": [
@@ -19,7 +19,7 @@
       ],
       "expect_status": 200,
       "notes": "Basic read query; sales_user allowed",
-      "latency_ms": 3442,
+      "latency_ms": 4150,
       "status_code": 200,
       "body": {
         "user": {
@@ -29,10 +29,10 @@
           ],
           "auth_mode": "local_header_override"
         },
-        "answer": "**Pinnacle Bancorp** currently has **0 open issues**, but the account health status is **Critical (red)** with no issue history on record.\n\n- **Risk Level:** Critical\n- **Rationale:** Despite no open issues, the account health is red, indicating significant underlying risk or dissatisfaction.\n- **Urgency:** Immediate\n- **Missing Information:** Issue history is missing, which limits insight into past problems or resolutions.\n\n**Recommended Next Actions:**\n- Escalate to the account executive and support manager immediately.\n- Validate customer impact within 2 hours.\n- Assign a dedicated owner to the account.\n- Send a status update to the customer promptly.",
+        "answer": "**Pinnacle Bancorp** currently has **0 open customer issues**, but the account health status is **Critical (red)** with no issue history on record.\n\n- **Risk Level:** Critical\n- **Rationale:** Account health is red; no open issues or history to explain the status\n- **Urgency:** Immediate\n- **Missing Information:** Issue history is missing, which limits insight into underlying problems\n\n**Recommended Next Actions:**\n- Escalate to the account executive and support manager immediately\n- Validate customer impact within 2 hours\n- Assign a dedicated owner for the account\n- Send a status update to the customer promptly\n\nThis escalation is necessary despite no open issues due to the critical health status indicating potential undisclosed or emerging risks.",
         "plan": {
           "customer_name": "Pinnacle Bancorp",
-          "reasoning": "The user requests open customer issues for a named client Pinnacle Bancorp. According to rules, first get the customer profile, then get open issues for that client. No request for history or next action, so those steps are not needed.",
+          "reasoning": "The user requests open customer issues for a named client Pinnacle Bancorp. According to rules, first get the customer profile, then get open issues for that client. No request for history or next action is made.",
           "steps": [
             {
               "tool": "get_customer_profile",
@@ -679,10 +679,94 @@
               "answer": "**Pinnacle Bancorp** currently has **0 open issues**, but the account health status is **Critical (red)** with no issue history on record.\n\n- **Risk Level:** Critical\n- **Rationale:** Despite no open issues, the account health is red, indicating significant underlying risk or dissatisfaction.\n- **Urgency:** Immediate\n- **Missing Information:** Issue history is missing, which limits insight into past problems or resolutions.\n\n**Recommended Next Actions:**\n- Escalate to the account executive and support manager immediately.\n- Validate customer impact within 2 hours.\n- Assign a dedicated owner to the account.\n- Send a status update to the customer promptly.",
               "auth_mode": "local_header_override",
               "trace_id": "6913042e"
+            },
+            {
+              "query": "Show me open customer issues for Pinnacle Bancorp",
+              "plan": {
+                "customer_name": "Pinnacle Bancorp",
+                "reasoning": "The user requests open customer issues for a named client Pinnacle Bancorp. According to rules, first get the customer profile, then get open issues for that client. No request for history or next action is made.",
+                "steps": [
+                  {
+                    "tool": "get_customer_profile",
+                    "args": {
+                      "customer_name": "Pinnacle Bancorp"
+                    }
+                  },
+                  {
+                    "tool": "get_open_issues",
+                    "args": {
+                      "customer_name": "Pinnacle Bancorp"
+                    }
+                  }
+                ],
+                "available_tools": {
+                  "list_all_open_issues": "List issues across ALL customers. Args: severity (optional: critical/high/medium/low), statuses (optional list: open/in_progress/resolved/waiting \u2014 defaults to [open, in_progress]). USE THIS whenever no specific customer is named.",
+                  "get_customer_profile": "Get the profile for ONE named customer. Args: customer_name (string).",
+                  "get_open_issues": "Get all open issues for ONE named customer. Args: customer_name (string).",
+                  "get_issue_history": "Get update history for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "recommend_next_action": "Create a next action for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "semantic_search_issues": "Find issues by concept/phrase using semantic vector similarity (RAG). Args: query (string). Use for conceptual queries like \"issues similar to rate limiting problems\" or \"find API timeout issues\" when no specific customer is named."
+                },
+                "planner_mode": "llm",
+                "roles_seen": [
+                  "sales_user"
+                ]
+              },
+              "steps": [
+                {
+                  "tool": "get_customer_profile",
+                  "args": {
+                    "customer_name": "Pinnacle Bancorp"
+                  },
+                  "output": {
+                    "id": 1,
+                    "name": "Pinnacle Bancorp",
+                    "segment": "Enterprise",
+                    "account_owner": "alice.sales",
+                    "health_status": "red"
+                  }
+                },
+                {
+                  "tool": "get_open_issues",
+                  "args": {
+                    "customer_name": "Pinnacle Bancorp"
+                  },
+                  "output": []
+                },
+                {
+                  "skill": "risk_action_agent",
+                  "output": {
+                    "selected_primary_issue": null,
+                    "customer_name": "Pinnacle Bancorp",
+                    "executive_summary": "Pinnacle Bancorp has 0 open issue(s). Highest severity: none. Account health: red.",
+                    "customer_health": "red",
+                    "risk_level": "Critical",
+                    "rationale": "account health is red (critical account); no issue history on record",
+                    "urgency": "immediate",
+                    "recommended_next_action": "Escalate to account executive immediately. Validate customer impact within 2 hours, assign dedicated owner, and send a status update to the customer.",
+                    "owner_suggestion": "Escalate to account executive and support manager immediately.",
+                    "missing_information": [
+                      "Issue history missing"
+                    ],
+                    "evidence_used": {
+                      "customer_id": 1,
+                      "issue_ids": [],
+                      "history_events": 0,
+                      "sources": [
+                        "customers",
+                        "issues"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "answer": "**Pinnacle Bancorp** currently has **0 open customer issues**, but the account health status is **Critical (red)** with no issue history on record.\n\n- **Risk Level:** Critical\n- **Rationale:** Account health is red; no open issues or history to explain the status\n- **Urgency:** Immediate\n- **Missing Information:** Issue history is missing, which limits insight into underlying problems\n\n**Recommended Next Actions:**\n- Escalate to the account executive and support manager immediately\n- Validate customer impact within 2 hours\n- Assign a dedicated owner for the account\n- Send a status update to the customer promptly\n\nThis escalation is necessary despite no open issues due to the critical health status indicating potential undisclosed or emerging risks.",
+              "auth_mode": "local_header_override",
+              "trace_id": "6d8424f6"
             }
           ]
         },
-        "trace_id": "6913042e"
+        "trace_id": "6d8424f6"
       },
       "actual_tools": [
         "get_customer_profile",
@@ -703,7 +787,7 @@
       ],
       "expect_status": 200,
       "notes": "Status summary including issue history; uses support_user (no RLS restriction) to verify the 3-tool history flow",
-      "latency_ms": 5217,
+      "latency_ms": 5331,
       "status_code": 200,
       "body": {
         "user": {
@@ -713,10 +797,10 @@
           ],
           "auth_mode": "local_header_override"
         },
-        "answer": "**Nexus Payments Ltd** (Mid-Market segment, Account Owner: marcus.chen) currently has a **Critical** risk level with a **red** health status.\n\n### Open Issues (3 total):\n1. **ISO 20022 pacs.008 rejection rate at 12% following SWIFT cutover** (Critical, open)\n   - Rejection rate increased from 3% to 12% within 3 days post go-live.\n   - 1,847 pacs.008 payments rejected due to BIC11 validation failures for 6 correspondent banks.\n   - 4 banks have migration timelines within 30 days; 2 non-responsive correspondents are receiving contractual compliance notices.\n   - Interim workaround: payments rerouted via legacy MT103 pathway, which closes in March 2025.\n   - No issue owner assigned yet.\n\n2. **PSD2 Open Banking API returning HTTP 429 errors to three regulated TPPs** (High, open)\n\n3. **Chargeback reconciliation lag: 2,400 unmatched transactions pending over 72 hours** (High, open)\n\n### Latest History Note on Primary Issue (ID `6`):\n- The critical rejection issue is escalating, with ongoing remediation efforts including SWIFT ticket raised and legal notices to non-responsive banks.\n\n### Risk Assessment:\n- Account health is red.\n- Presence of a critical severity issue plus two high severity issues.\n- No dedicated issue owner assigned for the critical problem.\n- Urgency is immediate.\n\n### Recommended Next Action:\n- **Escalate to the account executive and support manager immediately.**\n- Validate customer impact within 2 hours.\n- Assign a dedicated owner to the critical issue.\n- Send a status update to Nexus Payments Ltd promptly.",
+        "answer": "**Nexus Payments Ltd** (Mid-Market, Account Owner: marcus.chen) currently has a **Critical** risk level with a **red** health status.\n\n### Open Issues (3 total):\n1. **Critical:** ISO 20022 pacs.008 rejection rate at 12% following SWIFT cutover (`ID 6`)\n   - Rejection rate increased from 3% to 12% by day 3 post-cutover.\n   - 1,847 pacs.008 payments rejected due to BIC11 validation failures for 6 correspondent banks.\n   - 4 banks have migration timelines within 30 days; 2 non-responsive, with legal notices being drafted.\n   - Interim workaround: payments rerouted via legacy MT103 pathway, which closes in March 2025.\n   - No issue owner assigned yet.\n2. **High:** PSD2 Open Banking API returning HTTP 429 errors to three regulated TPPs (`ID 7`)\n3. **High:** Chargeback reconciliation lag with 2,400 unmatched transactions pending over 72 hours (`ID 8`)\n\n### Latest History Note (Issue 6):\n- SWIFT service desk ticket raised (ref SWIFT-2024-00341).\n- Interim workaround in place.\n- Legal team involved for non-responsive correspondent banks.\n\n### Risk Assessment:\n- Critical severity issue present.\n- Account health is red.\n- Multiple unresolved high-severity issues.\n- Urgency: Immediate.\n\n### Recommended Next Action:\n- **Escalate to account executive and support manager immediately.**\n- Validate customer impact within 2 hours.\n- Assign a dedicated issue owner.\n- Send a status update to the customer promptly.\n\nThis escalation is urgent to mitigate ongoing payment rejections and operational impact.",
         "plan": {
           "customer_name": "Nexus Payments Ltd",
-          "reasoning": "The user requests a summary of the latest status for a named client 'Nexus Payments Ltd'. According to RULE 4, we first get the customer profile, then get open issues, and finally get issue history since the query includes 'latest status'.",
+          "reasoning": "The user requests a summary of the latest status for a named client 'Nexus Payments Ltd'. According to RULE 4, we first get the customer profile, then get open issues, and finally get issue history since the query includes 'summarise' and 'latest'.",
           "steps": [
             {
               "tool": "get_customer_profile",
@@ -1679,10 +1763,157 @@
               "answer": "**Nexus Payments Ltd** (Mid-Market segment, Account Owner: marcus.chen) currently has a **Critical** risk level with a **red** health status.\n\n### Open Issues (3 total):\n1. **ISO 20022 pacs.008 rejection rate at 12% following SWIFT cutover** (Critical, open)\n   - Rejection rate increased from 3% to 12% within 3 days post go-live.\n   - 1,847 pacs.008 payments rejected due to BIC11 validation failures for 6 correspondent banks.\n   - 4 banks have migration timelines within 30 days; 2 non-responsive correspondents are receiving contractual compliance notices.\n   - Interim workaround: payments rerouted via legacy MT103 pathway, which closes in March 2025.\n   - No issue owner assigned yet.\n\n2. **PSD2 Open Banking API returning HTTP 429 errors to three regulated TPPs** (High, open)\n\n3. **Chargeback reconciliation lag: 2,400 unmatched transactions pending over 72 hours** (High, open)\n\n### Latest History Note on Primary Issue (ID `6`):\n- The critical rejection issue is escalating, with ongoing remediation efforts including SWIFT ticket raised and legal notices to non-responsive banks.\n\n### Risk Assessment:\n- Account health is red.\n- Presence of a critical severity issue plus two high severity issues.\n- No dedicated issue owner assigned for the critical problem.\n- Urgency is immediate.\n\n### Recommended Next Action:\n- **Escalate to the account executive and support manager immediately.**\n- Validate customer impact within 2 hours.\n- Assign a dedicated owner to the critical issue.\n- Send a status update to Nexus Payments Ltd promptly.",
               "auth_mode": "local_header_override",
               "trace_id": "d57d2bee"
+            },
+            {
+              "query": "Summarise the latest status for Nexus Payments Ltd",
+              "plan": {
+                "customer_name": "Nexus Payments Ltd",
+                "reasoning": "The user requests a summary of the latest status for a named client 'Nexus Payments Ltd'. According to RULE 4, we first get the customer profile, then get open issues, and finally get issue history since the query includes 'summarise' and 'latest'.",
+                "steps": [
+                  {
+                    "tool": "get_customer_profile",
+                    "args": {
+                      "customer_name": "Nexus Payments Ltd"
+                    }
+                  },
+                  {
+                    "tool": "get_open_issues",
+                    "args": {
+                      "customer_name": "Nexus Payments Ltd"
+                    }
+                  },
+                  {
+                    "tool": "get_issue_history",
+                    "args_from": "first_issue_id"
+                  }
+                ],
+                "available_tools": {
+                  "list_all_open_issues": "List issues across ALL customers. Args: severity (optional: critical/high/medium/low), statuses (optional list: open/in_progress/resolved/waiting \u2014 defaults to [open, in_progress]). USE THIS whenever no specific customer is named.",
+                  "get_customer_profile": "Get the profile for ONE named customer. Args: customer_name (string).",
+                  "get_open_issues": "Get all open issues for ONE named customer. Args: customer_name (string).",
+                  "get_issue_history": "Get update history for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "recommend_next_action": "Create a next action for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "semantic_search_issues": "Find issues by concept/phrase using semantic vector similarity (RAG). Args: query (string). Use for conceptual queries like \"issues similar to rate limiting problems\" or \"find API timeout issues\" when no specific customer is named."
+                },
+                "planner_mode": "llm",
+                "roles_seen": [
+                  "support_user"
+                ]
+              },
+              "steps": [
+                {
+                  "tool": "get_customer_profile",
+                  "args": {
+                    "customer_name": "Nexus Payments Ltd"
+                  },
+                  "output": {
+                    "id": 3,
+                    "name": "Nexus Payments Ltd",
+                    "segment": "Mid-Market",
+                    "account_owner": "marcus.chen",
+                    "health_status": "red"
+                  }
+                },
+                {
+                  "tool": "get_open_issues",
+                  "args": {
+                    "customer_name": "Nexus Payments Ltd"
+                  },
+                  "output": [
+                    {
+                      "id": 6,
+                      "title": "ISO 20022 pacs.008 rejection rate at 12% following SWIFT cutover",
+                      "severity": "critical",
+                      "status": "open",
+                      "customer_name": "Nexus Payments Ltd"
+                    },
+                    {
+                      "id": 7,
+                      "title": "PSD2 Open Banking API returning HTTP 429 errors to three regulated TPPs",
+                      "severity": "high",
+                      "status": "open",
+                      "customer_name": "Nexus Payments Ltd"
+                    },
+                    {
+                      "id": 8,
+                      "title": "Chargeback reconciliation lag: 2,400 unmatched transactions pending over 72 hours",
+                      "severity": "high",
+                      "status": "open",
+                      "customer_name": "Nexus Payments Ltd"
+                    }
+                  ]
+                },
+                {
+                  "tool": "get_issue_history",
+                  "args": {
+                    "issue_id": 6
+                  },
+                  "output": [
+                    {
+                      "issue_id": 6,
+                      "update_text": "Rejection rate climbed from 3% on go-live day to 12% by day 3. Total 1,847 pacs.008 payments rejected by correspondent banks. Primary reason: BIC11 validation failing for 6 respondent banks not yet migrated to ISO 20022.",
+                      "updated_by": "dev.lead",
+                      "created_at": "2026-06-25T14:09:42.132709"
+                    },
+                    {
+                      "issue_id": 6,
+                      "update_text": "SWIFT service desk ticket raised (ref SWIFT-2024-00341). Interim workaround agreed: affected payments re-routed via legacy MT103 pathway. Note: this fallback pathway closes in March 2025.",
+                      "updated_by": "ops.manager",
+                      "created_at": "2026-06-25T14:09:42.132995"
+                    },
+                    {
+                      "issue_id": 6,
+                      "update_text": "All 6 affected BICs identified. 4 have confirmed migration timelines within 30 days. 2 have not responded to outreach. Legal team drafting contractual compliance notices to non-responsive correspondents.",
+                      "updated_by": "compliance.lead",
+                      "created_at": "2026-06-25T14:09:42.133548"
+                    }
+                  ]
+                },
+                {
+                  "skill": "risk_action_agent",
+                  "output": {
+                    "selected_primary_issue": {
+                      "id": 6,
+                      "title": "ISO 20022 pacs.008 rejection rate at 12% following SWIFT cutover",
+                      "severity": "critical",
+                      "status": "open",
+                      "customer_name": "Nexus Payments Ltd"
+                    },
+                    "customer_name": "Nexus Payments Ltd",
+                    "executive_summary": "Nexus Payments Ltd has 3 open issue(s). Highest severity: Critical. Account health: red.",
+                    "customer_health": "red",
+                    "risk_level": "Critical",
+                    "rationale": "Critical-severity issue present; account health is red (critical account); 3 open issues unresolved",
+                    "urgency": "immediate",
+                    "recommended_next_action": "Escalate to account executive immediately. Validate customer impact within 2 hours, assign dedicated owner, and send a status update to the customer.",
+                    "owner_suggestion": "Escalate to account executive and support manager immediately.",
+                    "missing_information": [
+                      "Issue owner not assigned"
+                    ],
+                    "evidence_used": {
+                      "customer_id": 3,
+                      "issue_ids": [
+                        6,
+                        7,
+                        8
+                      ],
+                      "history_events": 3,
+                      "sources": [
+                        "customers",
+                        "issues",
+                        "issue_updates"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "answer": "**Nexus Payments Ltd** (Mid-Market, Account Owner: marcus.chen) currently has a **Critical** risk level with a **red** health status.\n\n### Open Issues (3 total):\n1. **Critical:** ISO 20022 pacs.008 rejection rate at 12% following SWIFT cutover (`ID 6`)\n   - Rejection rate increased from 3% to 12% by day 3 post-cutover.\n   - 1,847 pacs.008 payments rejected due to BIC11 validation failures for 6 correspondent banks.\n   - 4 banks have migration timelines within 30 days; 2 non-responsive, with legal notices being drafted.\n   - Interim workaround: payments rerouted via legacy MT103 pathway, which closes in March 2025.\n   - No issue owner assigned yet.\n2. **High:** PSD2 Open Banking API returning HTTP 429 errors to three regulated TPPs (`ID 7`)\n3. **High:** Chargeback reconciliation lag with 2,400 unmatched transactions pending over 72 hours (`ID 8`)\n\n### Latest History Note (Issue 6):\n- SWIFT service desk ticket raised (ref SWIFT-2024-00341).\n- Interim workaround in place.\n- Legal team involved for non-responsive correspondent banks.\n\n### Risk Assessment:\n- Critical severity issue present.\n- Account health is red.\n- Multiple unresolved high-severity issues.\n- Urgency: Immediate.\n\n### Recommended Next Action:\n- **Escalate to account executive and support manager immediately.**\n- Validate customer impact within 2 hours.\n- Assign a dedicated issue owner.\n- Send a status update to the customer promptly.\n\nThis escalation is urgent to mitigate ongoing payment rejections and operational impact.",
+              "auth_mode": "local_header_override",
+              "trace_id": "4b712b08"
             }
           ]
         },
-        "trace_id": "d57d2bee"
+        "trace_id": "4b712b08"
       },
       "actual_tools": [
         "get_customer_profile",
@@ -1702,7 +1933,7 @@
       ],
       "expect_status": 200,
       "notes": "Profile-only query",
-      "latency_ms": 3485,
+      "latency_ms": 4487,
       "status_code": 200,
       "body": {
         "user": {
@@ -1715,7 +1946,7 @@
         "answer": "**Customer Profile: Apex Clearing Services**\n\n- **ID:** 2  \n- **Segment:** Mid-Market  \n- **Account Owner:** alice.sales  \n- **Health Status:** **Red** (Critical)  \n- **Open Issues:** 0  \n- **Issue History:** Missing (no recorded history)  \n\n**Risk Assessment:**  \n- **Risk Level:** **Critical**  \n- **Rationale:** Account health is red with no open issues or issue history, indicating an urgent unknown risk.  \n- **Urgency:** Immediate  \n\n**Recommended Next Action:**  \n- Escalate to the account executive and support manager immediately.  \n- Validate customer impact within 2 hours.  \n- Assign a dedicated owner.  \n- Send a status update to the customer.",
         "plan": {
           "customer_name": "Apex Clearing Services",
-          "reasoning": "The user requests the customer profile for a named client 'Apex Clearing Services'. According to RULE 4, we first call get_customer_profile for the named client.",
+          "reasoning": "The user requests the customer profile for a named client 'Apex Clearing Services'. According to Rule 4, we first call get_customer_profile for the named client.",
           "steps": [
             {
               "tool": "get_customer_profile",
@@ -2205,10 +2436,81 @@
               "answer": "**Customer Profile: Apex Clearing Services**\n\n- **ID:** 2  \n- **Segment:** Mid-Market  \n- **Account Owner:** alice.sales  \n- **Health Status:** **Red** (Critical)  \n- **Open Issues:** 0  \n- **Issue History:** Missing (no recorded history)  \n\n**Risk Assessment:**  \n- **Risk Level:** **Critical**  \n- **Rationale:** Account health is red with no open issues or issue history, indicating an urgent unknown risk.  \n- **Urgency:** Immediate  \n\n**Recommended Next Action:**  \n- Escalate to the account executive and support manager immediately.  \n- Validate customer impact within 2 hours.  \n- Assign a dedicated owner.  \n- Send a status update to the customer.",
               "auth_mode": "local_header_override",
               "trace_id": "7e647707"
+            },
+            {
+              "query": "Give me the customer profile for Apex Clearing Services",
+              "plan": {
+                "customer_name": "Apex Clearing Services",
+                "reasoning": "The user requests the customer profile for a named client 'Apex Clearing Services'. According to Rule 4, we first call get_customer_profile for the named client.",
+                "steps": [
+                  {
+                    "tool": "get_customer_profile",
+                    "args": {
+                      "customer_name": "Apex Clearing Services"
+                    }
+                  }
+                ],
+                "available_tools": {
+                  "list_all_open_issues": "List issues across ALL customers. Args: severity (optional: critical/high/medium/low), statuses (optional list: open/in_progress/resolved/waiting \u2014 defaults to [open, in_progress]). USE THIS whenever no specific customer is named.",
+                  "get_customer_profile": "Get the profile for ONE named customer. Args: customer_name (string).",
+                  "get_open_issues": "Get all open issues for ONE named customer. Args: customer_name (string).",
+                  "get_issue_history": "Get update history for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "recommend_next_action": "Create a next action for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "semantic_search_issues": "Find issues by concept/phrase using semantic vector similarity (RAG). Args: query (string). Use for conceptual queries like \"issues similar to rate limiting problems\" or \"find API timeout issues\" when no specific customer is named."
+                },
+                "planner_mode": "llm",
+                "roles_seen": [
+                  "sales_user"
+                ]
+              },
+              "steps": [
+                {
+                  "tool": "get_customer_profile",
+                  "args": {
+                    "customer_name": "Apex Clearing Services"
+                  },
+                  "output": {
+                    "id": 2,
+                    "name": "Apex Clearing Services",
+                    "segment": "Mid-Market",
+                    "account_owner": "alice.sales",
+                    "health_status": "red"
+                  }
+                },
+                {
+                  "skill": "risk_action_agent",
+                  "output": {
+                    "selected_primary_issue": null,
+                    "customer_name": "Apex Clearing Services",
+                    "executive_summary": "Apex Clearing Services has 0 open issue(s). Highest severity: none. Account health: red.",
+                    "customer_health": "red",
+                    "risk_level": "Critical",
+                    "rationale": "account health is red (critical account); no issue history on record",
+                    "urgency": "immediate",
+                    "recommended_next_action": "Escalate to account executive immediately. Validate customer impact within 2 hours, assign dedicated owner, and send a status update to the customer.",
+                    "owner_suggestion": "Escalate to account executive and support manager immediately.",
+                    "missing_information": [
+                      "Issue history missing"
+                    ],
+                    "evidence_used": {
+                      "customer_id": 2,
+                      "issue_ids": [],
+                      "history_events": 0,
+                      "sources": [
+                        "customers",
+                        "issues"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "answer": "**Customer Profile: Apex Clearing Services**\n\n- **ID:** 2  \n- **Segment:** Mid-Market  \n- **Account Owner:** alice.sales  \n- **Health Status:** **Red** (Critical)  \n- **Open Issues:** 0  \n- **Issue History:** Missing (no recorded history)  \n\n**Risk Assessment:**  \n- **Risk Level:** **Critical**  \n- **Rationale:** Account health is red with no open issues or issue history, indicating an urgent unknown risk.  \n- **Urgency:** Immediate  \n\n**Recommended Next Action:**  \n- Escalate to the account executive and support manager immediately.  \n- Validate customer impact within 2 hours.  \n- Assign a dedicated owner.  \n- Send a status update to the customer.",
+              "auth_mode": "local_header_override",
+              "trace_id": "c83b7446"
             }
           ]
         },
-        "trace_id": "7e647707"
+        "trace_id": "c83b7446"
       },
       "actual_tools": [
         "get_customer_profile"
@@ -2226,7 +2528,7 @@
       ],
       "expect_status": 200,
       "notes": "Different customer; tests customer-name extraction",
-      "latency_ms": 2825,
+      "latency_ms": 3047,
       "status_code": 200,
       "body": {
         "user": {
@@ -2236,7 +2538,7 @@
           ],
           "auth_mode": "local_header_override"
         },
-        "answer": "**Meridian Capital Group** (ID: `4`) is an Enterprise segment client with an account owner of **james.whitfield**. The current account health status is **amber**, indicating a medium risk level.\n\n- **Open Issues:** 0\n- **Highest Severity:** None\n- **Issue History:** Missing\n- **Risk Level:** Medium\n- **Urgency:** Review within 48 hours\n\n**Recommended Next Action:**\n- Assign an owner (suggested: `support_user`)\n- Validate current customer impact\n- Provide an update within one business day\n- Schedule a review within 48 hours\n\nThis proactive engagement is necessary due to the amber health status and lack of issue history to ensure no underlying risks are overlooked.",
+        "answer": "**Meridian Capital Group** (ID: `4`) is an Enterprise segment client with an account owner of **james.whitfield**. The current account health status is **amber**, indicating a medium risk level.\n\n- **Open issues:** 0\n- **Highest severity:** None\n- **Issue history:** Missing\n- **Risk level:** Medium\n- **Urgency:** Review within 48 hours\n\n**Recommended next action:**\n- Assign an owner (suggested: `support_user`)\n- Validate current customer impact\n- Provide an update within one business day\n- Schedule a review within 48 hours\n\nThis proactive engagement is necessary due to the amber health status and lack of issue history.",
         "plan": {
           "customer_name": "Meridian Capital Group",
           "reasoning": "User requests the customer profile for a named client, Meridian Capital Group. According to rules, first step is to get_customer_profile for the named client.",
@@ -2729,10 +3031,81 @@
               "answer": "**Meridian Capital Group** (ID: `4`) is an Enterprise segment client with an account owner of **james.whitfield**. The current account health status is **amber**, indicating a medium risk level.\n\n- **Open Issues:** 0\n- **Highest Severity:** None\n- **Issue History:** Missing\n- **Risk Level:** Medium\n- **Urgency:** Review within 48 hours\n\n**Recommended Next Action:**\n- Assign an owner (suggested: `support_user`)\n- Validate current customer impact\n- Provide an update within one business day\n- Schedule a review within 48 hours\n\nThis proactive engagement is necessary due to the amber health status and lack of issue history to ensure no underlying risks are overlooked.",
               "auth_mode": "local_header_override",
               "trace_id": "5535d8e5"
+            },
+            {
+              "query": "Give me the customer profile for Meridian Capital Group",
+              "plan": {
+                "customer_name": "Meridian Capital Group",
+                "reasoning": "User requests the customer profile for a named client, Meridian Capital Group. According to rules, first step is to get_customer_profile for the named client.",
+                "steps": [
+                  {
+                    "tool": "get_customer_profile",
+                    "args": {
+                      "customer_name": "Meridian Capital Group"
+                    }
+                  }
+                ],
+                "available_tools": {
+                  "list_all_open_issues": "List issues across ALL customers. Args: severity (optional: critical/high/medium/low), statuses (optional list: open/in_progress/resolved/waiting \u2014 defaults to [open, in_progress]). USE THIS whenever no specific customer is named.",
+                  "get_customer_profile": "Get the profile for ONE named customer. Args: customer_name (string).",
+                  "get_open_issues": "Get all open issues for ONE named customer. Args: customer_name (string).",
+                  "get_issue_history": "Get update history for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "recommend_next_action": "Create a next action for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "semantic_search_issues": "Find issues by concept/phrase using semantic vector similarity (RAG). Args: query (string). Use for conceptual queries like \"issues similar to rate limiting problems\" or \"find API timeout issues\" when no specific customer is named."
+                },
+                "planner_mode": "llm",
+                "roles_seen": [
+                  "sales_user"
+                ]
+              },
+              "steps": [
+                {
+                  "tool": "get_customer_profile",
+                  "args": {
+                    "customer_name": "Meridian Capital Group"
+                  },
+                  "output": {
+                    "id": 4,
+                    "name": "Meridian Capital Group",
+                    "segment": "Enterprise",
+                    "account_owner": "james.whitfield",
+                    "health_status": "amber"
+                  }
+                },
+                {
+                  "skill": "risk_action_agent",
+                  "output": {
+                    "selected_primary_issue": null,
+                    "customer_name": "Meridian Capital Group",
+                    "executive_summary": "Meridian Capital Group has 0 open issue(s). Highest severity: none. Account health: amber.",
+                    "customer_health": "amber",
+                    "risk_level": "Medium",
+                    "rationale": "account health is amber; no issue history on record",
+                    "urgency": "within 48 h",
+                    "recommended_next_action": "Assign an owner, validate current customer impact, and provide an update within one business day.",
+                    "owner_suggestion": "Assign to support_user; schedule review within 48 hours.",
+                    "missing_information": [
+                      "Issue history missing"
+                    ],
+                    "evidence_used": {
+                      "customer_id": 4,
+                      "issue_ids": [],
+                      "history_events": 0,
+                      "sources": [
+                        "customers",
+                        "issues"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "answer": "**Meridian Capital Group** (ID: `4`) is an Enterprise segment client with an account owner of **james.whitfield**. The current account health status is **amber**, indicating a medium risk level.\n\n- **Open issues:** 0\n- **Highest severity:** None\n- **Issue history:** Missing\n- **Risk level:** Medium\n- **Urgency:** Review within 48 hours\n\n**Recommended next action:**\n- Assign an owner (suggested: `support_user`)\n- Validate current customer impact\n- Provide an update within one business day\n- Schedule a review within 48 hours\n\nThis proactive engagement is necessary due to the amber health status and lack of issue history.",
+              "auth_mode": "local_header_override",
+              "trace_id": "a182d44d"
             }
           ]
         },
-        "trace_id": "5535d8e5"
+        "trace_id": "a182d44d"
       },
       "actual_tools": [
         "get_customer_profile"
@@ -2750,7 +3123,7 @@
       ],
       "expect_status": 200,
       "notes": "Portfolio-wide query; no customer name; must route to list_all_open_issues",
-      "latency_ms": 2438,
+      "latency_ms": 4411,
       "status_code": 200,
       "body": {
         "user": {
@@ -2763,7 +3136,7 @@
         "answer": "No critical issues are currently open across all clients.",
         "plan": {
           "customer_name": "",
-          "reasoning": "The user requests a list of all critical issues across all clients, which is a portfolio-wide query with severity filtering. According to RULE 2 and RULE 3, we use list_all_open_issues with severity 'critical' and default statuses (open + in_progress).",
+          "reasoning": "The user requests a list of all critical issues across all clients, which is a portfolio-wide query with severity filtering. According to RULE 2 and RULE 3, use list_all_open_issues with severity 'critical' and default statuses (open + in_progress).",
           "steps": [
             {
               "tool": "list_all_open_issues",
@@ -3085,10 +3458,49 @@
               "answer": "No critical issues are currently open across all clients.",
               "auth_mode": "local_header_override",
               "trace_id": "d110e625"
+            },
+            {
+              "query": "List all critical issues across all clients",
+              "plan": {
+                "customer_name": "",
+                "reasoning": "The user requests a list of all critical issues across all clients, which is a portfolio-wide query with severity filtering. According to RULE 2 and RULE 3, use list_all_open_issues with severity 'critical' and default statuses (open + in_progress).",
+                "steps": [
+                  {
+                    "tool": "list_all_open_issues",
+                    "args": {
+                      "severity": "critical"
+                    }
+                  }
+                ],
+                "available_tools": {
+                  "list_all_open_issues": "List issues across ALL customers. Args: severity (optional: critical/high/medium/low), statuses (optional list: open/in_progress/resolved/waiting \u2014 defaults to [open, in_progress]). USE THIS whenever no specific customer is named.",
+                  "get_customer_profile": "Get the profile for ONE named customer. Args: customer_name (string).",
+                  "get_open_issues": "Get all open issues for ONE named customer. Args: customer_name (string).",
+                  "get_issue_history": "Get update history for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "recommend_next_action": "Create a next action for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "semantic_search_issues": "Find issues by concept/phrase using semantic vector similarity (RAG). Args: query (string). Use for conceptual queries like \"issues similar to rate limiting problems\" or \"find API timeout issues\" when no specific customer is named."
+                },
+                "planner_mode": "llm",
+                "roles_seen": [
+                  "sales_user"
+                ]
+              },
+              "steps": [
+                {
+                  "tool": "list_all_open_issues",
+                  "args": {
+                    "severity": "critical"
+                  },
+                  "output": []
+                }
+              ],
+              "answer": "No critical issues are currently open across all clients.",
+              "auth_mode": "local_header_override",
+              "trace_id": "eeb608c5"
             }
           ]
         },
-        "trace_id": "d110e625"
+        "trace_id": "eeb608c5"
       },
       "actual_tools": [
         "list_all_open_issues"
@@ -3106,7 +3518,7 @@
       ],
       "expect_status": 200,
       "notes": "Portfolio query with severity filter; must not route to single-client tools",
-      "latency_ms": 5289,
+      "latency_ms": 4316,
       "status_code": 200,
       "body": {
         "user": {
@@ -3116,10 +3528,10 @@
           ],
           "auth_mode": "local_header_override"
         },
-        "answer": "**Clients with High Severity Open Issues:**\n\n- **Nexus Payments Ltd** (Health Status: Red)\n  - `#7` PSD2 Open Banking API returning HTTP 429 errors to three regulated TPPs\n  - `#8` Chargeback reconciliation lag: 2,400 unmatched transactions pending over 72 hours\n\n- **Pinnacle Bancorp** (Health Status: Red)\n  - `#3` Mobile banking 504 timeouts during morning peak 09:00-11:00 GMT\n  - `#2` AML screening queue backlog breaching 4-hour SLA threshold\n\n- **Atlas Merchant Bank** (Health Status: Amber)\n  - `#15` KYC periodic review overdue: 180 corporate accounts beyond 12-month refresh cycle\n\n- **Fortuna Wealth Management** (Health Status: Amber)\n  - `#11` MiFID II transaction reporting: 340 equity trades late-filed to FCA via ARM\n\n- **Meridian Capital Group** (Health Status: Amber)\n  - `#9` T+2 settlement reconciliation breaks on multi-leg equity structured trades\n\n**Recommended Action:**\nImmediate investigation and remediation are required for **Nexus Payments Ltd** and **Pinnacle Bancorp** due to their red health status and multiple high severity open issues impacting critical operations.",
+        "answer": "**Clients with High Severity Open Issues:**\n\n- **Nexus Payments Ltd** (Health Status: Red)\n  - `ID 7`: PSD2 Open Banking API returning HTTP 429 errors to three regulated TPPs\n  - `ID 8`: Chargeback reconciliation lag: 2,400 unmatched transactions pending over 72 hours\n\n- **Pinnacle Bancorp** (Health Status: Red)\n  - `ID 3`: Mobile banking 504 timeouts during morning peak 09:00-11:00 GMT\n  - `ID 2`: AML screening queue backlog breaching 4-hour SLA threshold\n\n- **Atlas Merchant Bank** (Health Status: Amber)\n  - `ID 15`: KYC periodic review overdue: 180 corporate accounts beyond 12-month refresh cycle\n\n- **Fortuna Wealth Management** (Health Status: Amber)\n  - `ID 11`: MiFID II transaction reporting: 340 equity trades late-filed to FCA via ARM\n\n- **Meridian Capital Group** (Health Status: Amber)\n  - `ID 9`: T+2 settlement reconciliation breaks on multi-leg equity structured trades\n\n**Recommended Action:**  \nImmediate investigation and remediation are critical for **Nexus Payments Ltd** and **Pinnacle Bancorp** due to their red health status combined with multiple high severity open issues impacting core operations and regulatory compliance. Prioritize resolving API errors, transaction reconciliation, system timeouts, and AML screening backlogs.",
         "plan": {
           "customer_name": "",
-          "reasoning": "The user requests a portfolio-wide view of clients with high severity open issues without specifying a customer name. According to RULE 2 and RULE 3, we use list_all_open_issues with severity 'high' and status 'open'.",
+          "reasoning": "User requests a portfolio-wide view of clients with high severity open issues, no specific customer named. According to RULE 2 and RULE 3, use list_all_open_issues with severity 'high' and status 'open'.",
           "steps": [
             {
               "tool": "list_all_open_issues",
@@ -3875,10 +4287,119 @@
               "answer": "**Clients with High Severity Open Issues:**\n\n- **Nexus Payments Ltd** (Health Status: Red)\n  - `#7` PSD2 Open Banking API returning HTTP 429 errors to three regulated TPPs\n  - `#8` Chargeback reconciliation lag: 2,400 unmatched transactions pending over 72 hours\n\n- **Pinnacle Bancorp** (Health Status: Red)\n  - `#3` Mobile banking 504 timeouts during morning peak 09:00-11:00 GMT\n  - `#2` AML screening queue backlog breaching 4-hour SLA threshold\n\n- **Atlas Merchant Bank** (Health Status: Amber)\n  - `#15` KYC periodic review overdue: 180 corporate accounts beyond 12-month refresh cycle\n\n- **Fortuna Wealth Management** (Health Status: Amber)\n  - `#11` MiFID II transaction reporting: 340 equity trades late-filed to FCA via ARM\n\n- **Meridian Capital Group** (Health Status: Amber)\n  - `#9` T+2 settlement reconciliation breaks on multi-leg equity structured trades\n\n**Recommended Action:**\nImmediate investigation and remediation are required for **Nexus Payments Ltd** and **Pinnacle Bancorp** due to their red health status and multiple high severity open issues impacting critical operations.",
               "auth_mode": "local_header_override",
               "trace_id": "b260c1dc"
+            },
+            {
+              "query": "Which clients have high severity open issues",
+              "plan": {
+                "customer_name": "",
+                "reasoning": "User requests a portfolio-wide view of clients with high severity open issues, no specific customer named. According to RULE 2 and RULE 3, use list_all_open_issues with severity 'high' and status 'open'.",
+                "steps": [
+                  {
+                    "tool": "list_all_open_issues",
+                    "args": {
+                      "severity": "high",
+                      "statuses": [
+                        "open"
+                      ]
+                    }
+                  }
+                ],
+                "available_tools": {
+                  "list_all_open_issues": "List issues across ALL customers. Args: severity (optional: critical/high/medium/low), statuses (optional list: open/in_progress/resolved/waiting \u2014 defaults to [open, in_progress]). USE THIS whenever no specific customer is named.",
+                  "get_customer_profile": "Get the profile for ONE named customer. Args: customer_name (string).",
+                  "get_open_issues": "Get all open issues for ONE named customer. Args: customer_name (string).",
+                  "get_issue_history": "Get update history for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "recommend_next_action": "Create a next action for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "semantic_search_issues": "Find issues by concept/phrase using semantic vector similarity (RAG). Args: query (string). Use for conceptual queries like \"issues similar to rate limiting problems\" or \"find API timeout issues\" when no specific customer is named."
+                },
+                "planner_mode": "llm",
+                "roles_seen": [
+                  "support_user"
+                ]
+              },
+              "steps": [
+                {
+                  "tool": "list_all_open_issues",
+                  "args": {
+                    "severity": "high",
+                    "statuses": [
+                      "open"
+                    ]
+                  },
+                  "output": [
+                    {
+                      "id": 15,
+                      "title": "KYC periodic review overdue: 180 corporate accounts beyond 12-month refresh cycle",
+                      "severity": "high",
+                      "status": "open",
+                      "created_at": "2026-06-25T14:09:42.127921",
+                      "customer_name": "Atlas Merchant Bank",
+                      "health_status": "amber"
+                    },
+                    {
+                      "id": 11,
+                      "title": "MiFID II transaction reporting: 340 equity trades late-filed to FCA via ARM",
+                      "severity": "high",
+                      "status": "open",
+                      "created_at": "2026-06-25T14:09:42.126253",
+                      "customer_name": "Fortuna Wealth Management",
+                      "health_status": "amber"
+                    },
+                    {
+                      "id": 9,
+                      "title": "T+2 settlement reconciliation breaks on multi-leg equity structured trades",
+                      "severity": "high",
+                      "status": "open",
+                      "created_at": "2026-06-25T14:09:42.125631",
+                      "customer_name": "Meridian Capital Group",
+                      "health_status": "amber"
+                    },
+                    {
+                      "id": 7,
+                      "title": "PSD2 Open Banking API returning HTTP 429 errors to three regulated TPPs",
+                      "severity": "high",
+                      "status": "open",
+                      "created_at": "2026-06-25T14:09:42.125080",
+                      "customer_name": "Nexus Payments Ltd",
+                      "health_status": "red"
+                    },
+                    {
+                      "id": 8,
+                      "title": "Chargeback reconciliation lag: 2,400 unmatched transactions pending over 72 hours",
+                      "severity": "high",
+                      "status": "open",
+                      "created_at": "2026-06-25T14:09:42.125324",
+                      "customer_name": "Nexus Payments Ltd",
+                      "health_status": "red"
+                    },
+                    {
+                      "id": 3,
+                      "title": "Mobile banking 504 timeouts during morning peak 09:00-11:00 GMT",
+                      "severity": "high",
+                      "status": "open",
+                      "created_at": "2026-06-25T14:09:42.123169",
+                      "customer_name": "Pinnacle Bancorp",
+                      "health_status": "red"
+                    },
+                    {
+                      "id": 2,
+                      "title": "AML screening queue backlog breaching 4-hour SLA threshold",
+                      "severity": "high",
+                      "status": "open",
+                      "created_at": "2026-06-25T14:09:42.122807",
+                      "customer_name": "Pinnacle Bancorp",
+                      "health_status": "red"
+                    }
+                  ]
+                }
+              ],
+              "answer": "**Clients with High Severity Open Issues:**\n\n- **Nexus Payments Ltd** (Health Status: Red)\n  - `ID 7`: PSD2 Open Banking API returning HTTP 429 errors to three regulated TPPs\n  - `ID 8`: Chargeback reconciliation lag: 2,400 unmatched transactions pending over 72 hours\n\n- **Pinnacle Bancorp** (Health Status: Red)\n  - `ID 3`: Mobile banking 504 timeouts during morning peak 09:00-11:00 GMT\n  - `ID 2`: AML screening queue backlog breaching 4-hour SLA threshold\n\n- **Atlas Merchant Bank** (Health Status: Amber)\n  - `ID 15`: KYC periodic review overdue: 180 corporate accounts beyond 12-month refresh cycle\n\n- **Fortuna Wealth Management** (Health Status: Amber)\n  - `ID 11`: MiFID II transaction reporting: 340 equity trades late-filed to FCA via ARM\n\n- **Meridian Capital Group** (Health Status: Amber)\n  - `ID 9`: T+2 settlement reconciliation breaks on multi-leg equity structured trades\n\n**Recommended Action:**  \nImmediate investigation and remediation are critical for **Nexus Payments Ltd** and **Pinnacle Bancorp** due to their red health status combined with multiple high severity open issues impacting core operations and regulatory compliance. Prioritize resolving API errors, transaction reconciliation, system timeouts, and AML screening backlogs.",
+              "auth_mode": "local_header_override",
+              "trace_id": "f31ac311"
             }
           ]
         },
-        "trace_id": "b260c1dc"
+        "trace_id": "f31ac311"
       },
       "actual_tools": [
         "list_all_open_issues"
@@ -3899,7 +4420,7 @@
       ],
       "expect_status": 200,
       "notes": "Full plan; support_user authorised for recommend_next_action",
-      "latency_ms": 4921,
+      "latency_ms": 6143,
       "status_code": 200,
       "body": {
         "user": {
@@ -3909,10 +4430,10 @@
           ],
           "auth_mode": "local_header_override"
         },
-        "answer": "**Apex Clearing Services** status summary:\n\n- **Account health:** Red (critical)\n- **Open issues:** 1 critical issue\n  - Issue `#4`: \"FIX drop-copy session disconnects causing unreported trades at market open\"\n    - Problem: TCP resets at 08:00:03 CET daily cause ~340 trades per session to go unreported, breaching T+1 reporting obligations.\n    - Recent updates:\n      - MTU mismatch identified and partially fixed; session stable for 4 hours post-fix but issue recurred at market close.\n      - Packet captures sent to Euronext network engineering for root-cause analysis.\n- **Risk level:** Critical, requiring immediate attention\n- **Missing info:** Issue owner not assigned\n\n**Recommended next action:**\n\n- Escalate issue `#4` immediately to the account executive and support manager.\n- Validate the full scope of customer impact within 2 hours.\n- Assign a dedicated issue owner.\n- Coordinate a fix with relevant teams.\n- Provide Apex Clearing Services with a status update once resolution efforts are underway.\n\nThis escalation is urgent due to the critical severity and ongoing trade reporting breaches.",
+        "answer": "**Apex Clearing Services** status summary:\n\n- **Account health:** Red (critical)\n- **Open issues:** 1 critical issue\n  - Issue ID `4`: \"FIX drop-copy session disconnects causing unreported trades at market open\"\n    - Problem: TCP resets at 08:00:03 CET cause ~340 trades per session to go unreported, breaching T+1 reporting obligations.\n    - Recent updates:\n      - MTU mismatch identified and partially fixed; session stable for 4 hours post-fix but issue recurred at market close.\n      - Packet captures sent to Euronext network engineering for root-cause analysis.\n- **Risk level:** Critical, with immediate urgency.\n- **Missing info:** Issue owner not assigned.\n\n**Recommended next action:**\n\n- Escalate issue `4` immediately to the account executive and support manager.\n- Validate the full scope of customer impact within 2 hours.\n- Assign a dedicated issue owner.\n- Coordinate a fix with relevant teams.\n- Provide Apex Clearing Services with a status update once resolution efforts are underway.\n\nThis escalation and rapid response are essential due to the critical severity and regulatory impact of unreported trades.",
         "plan": {
           "customer_name": "Apex Clearing Services",
-          "reasoning": "The user named a specific client 'Apex Clearing Services' and requested a summary of the latest status and a recommendation for the next action. According to the rules, first get the customer profile, then get open issues, then get issue history for the latest status, and finally recommend the next action.",
+          "reasoning": "The user named a specific client 'Apex Clearing Services' and requested a summary of the latest status and a recommendation for the next action. According to rules, first get the customer profile, then get open issues, then get issue history for the latest status, and finally recommend the next action.",
           "steps": [
             {
               "tool": "get_customer_profile",
@@ -4010,7 +4531,7 @@
               "owner": "eval.support_user"
             },
             "output": {
-              "id": 39,
+              "id": 41,
               "issue_id": 4,
               "action_text": "Escalate \"FIX drop-copy session disconnects causing unreported trades at market open\" for Apex Clearing Services to the relevant team immediately. Confirm scope of impact, coordinate a fix, and send the customer a status update once resolution is underway.",
               "owner": "eval.support_user",
@@ -4955,10 +5476,160 @@
               "answer": "**Apex Clearing Services** status summary:\n\n- **Account health:** Red (critical)\n- **Open issues:** 1 critical issue\n  - Issue `#4`: \"FIX drop-copy session disconnects causing unreported trades at market open\"\n    - Problem: TCP resets at 08:00:03 CET daily cause ~340 trades per session to go unreported, breaching T+1 reporting obligations.\n    - Recent updates:\n      - MTU mismatch identified and partially fixed; session stable for 4 hours post-fix but issue recurred at market close.\n      - Packet captures sent to Euronext network engineering for root-cause analysis.\n- **Risk level:** Critical, requiring immediate attention\n- **Missing info:** Issue owner not assigned\n\n**Recommended next action:**\n\n- Escalate issue `#4` immediately to the account executive and support manager.\n- Validate the full scope of customer impact within 2 hours.\n- Assign a dedicated issue owner.\n- Coordinate a fix with relevant teams.\n- Provide Apex Clearing Services with a status update once resolution efforts are underway.\n\nThis escalation is urgent due to the critical severity and ongoing trade reporting breaches.",
               "auth_mode": "local_header_override",
               "trace_id": "6dc08ec5"
+            },
+            {
+              "query": "Summarise the latest status for Apex Clearing Services and suggest the next action",
+              "plan": {
+                "customer_name": "Apex Clearing Services",
+                "reasoning": "The user named a specific client 'Apex Clearing Services' and requested a summary of the latest status and a recommendation for the next action. According to rules, first get the customer profile, then get open issues, then get issue history for the latest status, and finally recommend the next action.",
+                "steps": [
+                  {
+                    "tool": "get_customer_profile",
+                    "args": {
+                      "customer_name": "Apex Clearing Services"
+                    }
+                  },
+                  {
+                    "tool": "get_open_issues",
+                    "args": {
+                      "customer_name": "Apex Clearing Services"
+                    }
+                  },
+                  {
+                    "tool": "get_issue_history",
+                    "args_from": "first_issue_id"
+                  },
+                  {
+                    "tool": "recommend_next_action",
+                    "args_from": "first_issue_id"
+                  }
+                ],
+                "available_tools": {
+                  "list_all_open_issues": "List issues across ALL customers. Args: severity (optional: critical/high/medium/low), statuses (optional list: open/in_progress/resolved/waiting \u2014 defaults to [open, in_progress]). USE THIS whenever no specific customer is named.",
+                  "get_customer_profile": "Get the profile for ONE named customer. Args: customer_name (string).",
+                  "get_open_issues": "Get all open issues for ONE named customer. Args: customer_name (string).",
+                  "get_issue_history": "Get update history for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "recommend_next_action": "Create a next action for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "semantic_search_issues": "Find issues by concept/phrase using semantic vector similarity (RAG). Args: query (string). Use for conceptual queries like \"issues similar to rate limiting problems\" or \"find API timeout issues\" when no specific customer is named."
+                },
+                "planner_mode": "llm",
+                "roles_seen": [
+                  "support_user"
+                ]
+              },
+              "steps": [
+                {
+                  "tool": "get_customer_profile",
+                  "args": {
+                    "customer_name": "Apex Clearing Services"
+                  },
+                  "output": {
+                    "id": 2,
+                    "name": "Apex Clearing Services",
+                    "segment": "Mid-Market",
+                    "account_owner": "alice.sales",
+                    "health_status": "red"
+                  }
+                },
+                {
+                  "tool": "get_open_issues",
+                  "args": {
+                    "customer_name": "Apex Clearing Services"
+                  },
+                  "output": [
+                    {
+                      "id": 4,
+                      "title": "FIX drop-copy session disconnects causing unreported trades at market open",
+                      "severity": "critical",
+                      "status": "open",
+                      "customer_name": "Apex Clearing Services"
+                    }
+                  ]
+                },
+                {
+                  "tool": "get_issue_history",
+                  "args": {
+                    "issue_id": 4
+                  },
+                  "output": [
+                    {
+                      "issue_id": 4,
+                      "update_text": "Drop-copy session to Euronext experiencing TCP resets at 08:00:03 CET each morning since Monday. Approximately 340 trades per session going unreported to the CCP, triggering a T+1 reporting obligation breach.",
+                      "updated_by": "dev.lead",
+                      "created_at": "2026-06-25T14:09:42.131215"
+                    },
+                    {
+                      "issue_id": 4,
+                      "update_text": "Network team identified MTU mismatch (1500 vs 1480) between clearing gateway and co-location switch following last week's firewall firmware upgrade. MTU alignment fix applied in co-lo at 14:00 CET. Session monitoring active.",
+                      "updated_by": "infra.team",
+                      "created_at": "2026-06-25T14:09:42.131517"
+                    },
+                    {
+                      "issue_id": 4,
+                      "update_text": "Session remained stable for 4 hours post-fix then recurred at market close 17:30 CET. Packet captures collected and sent to Euronext network engineering for joint root-cause analysis.",
+                      "updated_by": "ops.lead",
+                      "created_at": "2026-06-25T14:09:42.131852"
+                    }
+                  ]
+                },
+                {
+                  "tool": "recommend_next_action",
+                  "args": {
+                    "issue_id": 4,
+                    "owner": "eval.support_user"
+                  },
+                  "output": {
+                    "id": 41,
+                    "issue_id": 4,
+                    "action_text": "Escalate \"FIX drop-copy session disconnects causing unreported trades at market open\" for Apex Clearing Services to the relevant team immediately. Confirm scope of impact, coordinate a fix, and send the customer a status update once resolution is underway.",
+                    "owner": "eval.support_user",
+                    "due_date": "2026-06-26",
+                    "status": "proposed"
+                  }
+                },
+                {
+                  "skill": "risk_action_agent",
+                  "output": {
+                    "selected_primary_issue": {
+                      "id": 4,
+                      "title": "FIX drop-copy session disconnects causing unreported trades at market open",
+                      "severity": "critical",
+                      "status": "open",
+                      "customer_name": "Apex Clearing Services"
+                    },
+                    "customer_name": "Apex Clearing Services",
+                    "executive_summary": "Apex Clearing Services has 1 open issue(s). Highest severity: Critical. Account health: red.",
+                    "customer_health": "red",
+                    "risk_level": "Critical",
+                    "rationale": "Critical-severity issue present; account health is red (critical account)",
+                    "urgency": "immediate",
+                    "recommended_next_action": "Escalate to account executive immediately. Validate customer impact within 2 hours, assign dedicated owner, and send a status update to the customer.",
+                    "owner_suggestion": "Escalate to account executive and support manager immediately.",
+                    "missing_information": [
+                      "Issue owner not assigned"
+                    ],
+                    "evidence_used": {
+                      "customer_id": 2,
+                      "issue_ids": [
+                        4
+                      ],
+                      "history_events": 3,
+                      "sources": [
+                        "customers",
+                        "issues",
+                        "issue_updates"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "answer": "**Apex Clearing Services** status summary:\n\n- **Account health:** Red (critical)\n- **Open issues:** 1 critical issue\n  - Issue ID `4`: \"FIX drop-copy session disconnects causing unreported trades at market open\"\n    - Problem: TCP resets at 08:00:03 CET cause ~340 trades per session to go unreported, breaching T+1 reporting obligations.\n    - Recent updates:\n      - MTU mismatch identified and partially fixed; session stable for 4 hours post-fix but issue recurred at market close.\n      - Packet captures sent to Euronext network engineering for root-cause analysis.\n- **Risk level:** Critical, with immediate urgency.\n- **Missing info:** Issue owner not assigned.\n\n**Recommended next action:**\n\n- Escalate issue `4` immediately to the account executive and support manager.\n- Validate the full scope of customer impact within 2 hours.\n- Assign a dedicated issue owner.\n- Coordinate a fix with relevant teams.\n- Provide Apex Clearing Services with a status update once resolution efforts are underway.\n\nThis escalation and rapid response are essential due to the critical severity and regulatory impact of unreported trades.",
+              "auth_mode": "local_header_override",
+              "trace_id": "8986c568"
             }
           ]
         },
-        "trace_id": "6dc08ec5"
+        "trace_id": "8986c568"
       },
       "actual_tools": [
         "get_customer_profile",
@@ -4977,7 +5648,7 @@
       "expected_tools": [],
       "expect_status": 403,
       "notes": "RBAC: sales_user cannot trigger recommend_next_action",
-      "latency_ms": 2087,
+      "latency_ms": 1635,
       "status_code": 403,
       "body": {
         "detail": "Insufficient role"
@@ -4996,7 +5667,7 @@
       ],
       "expect_status": 200,
       "notes": "Unknown customer; tool still called, graceful empty response expected",
-      "latency_ms": 2225,
+      "latency_ms": 2048,
       "status_code": 200,
       "body": {
         "user": {
@@ -5009,7 +5680,7 @@
         "answer": "No customer profile found for **NonExistentCorp**. Please verify the customer name or ID and try again.",
         "plan": {
           "customer_name": "NonExistentCorp",
-          "reasoning": "User requests the customer profile for a specific named client NonExistentCorp. According to RULE 4, first step is to get_customer_profile for that client.",
+          "reasoning": "User requests the customer profile for a named client 'NonExistentCorp'. According to rules, for a named client query, first get the customer profile.",
           "steps": [
             {
               "tool": "get_customer_profile",
@@ -5275,10 +5946,49 @@
               "answer": "No customer profile found for **NonExistentCorp**. Please verify the customer name or ID and try again.",
               "auth_mode": "local_header_override",
               "trace_id": "fa6d2d1f"
+            },
+            {
+              "query": "Give me the customer profile for NonExistentCorp",
+              "plan": {
+                "customer_name": "NonExistentCorp",
+                "reasoning": "User requests the customer profile for a named client 'NonExistentCorp'. According to rules, for a named client query, first get the customer profile.",
+                "steps": [
+                  {
+                    "tool": "get_customer_profile",
+                    "args": {
+                      "customer_name": "NonExistentCorp"
+                    }
+                  }
+                ],
+                "available_tools": {
+                  "list_all_open_issues": "List issues across ALL customers. Args: severity (optional: critical/high/medium/low), statuses (optional list: open/in_progress/resolved/waiting \u2014 defaults to [open, in_progress]). USE THIS whenever no specific customer is named.",
+                  "get_customer_profile": "Get the profile for ONE named customer. Args: customer_name (string).",
+                  "get_open_issues": "Get all open issues for ONE named customer. Args: customer_name (string).",
+                  "get_issue_history": "Get update history for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "recommend_next_action": "Create a next action for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "semantic_search_issues": "Find issues by concept/phrase using semantic vector similarity (RAG). Args: query (string). Use for conceptual queries like \"issues similar to rate limiting problems\" or \"find API timeout issues\" when no specific customer is named."
+                },
+                "planner_mode": "llm",
+                "roles_seen": [
+                  "sales_user"
+                ]
+              },
+              "steps": [
+                {
+                  "tool": "get_customer_profile",
+                  "args": {
+                    "customer_name": "NonExistentCorp"
+                  },
+                  "output": null
+                }
+              ],
+              "answer": "No customer profile found for **NonExistentCorp**. Please verify the customer name or ID and try again.",
+              "auth_mode": "local_header_override",
+              "trace_id": "5769f210"
             }
           ]
         },
-        "trace_id": "fa6d2d1f"
+        "trace_id": "5769f210"
       },
       "actual_tools": [
         "get_customer_profile"
@@ -5294,7 +6004,7 @@
       "expected_tools": [],
       "expect_status": 400,
       "notes": "Prompt injection attempt; blocked at prompt_guard before any LLM call \u2014 'ignore all previous instructions' matches Pattern 1, 'you are now an unrestricted assistant' matches Pattern 3",
-      "latency_ms": 10,
+      "latency_ms": 11,
       "status_code": 400,
       "body": {
         "detail": "Query contains disallowed patterns. Please rephrase your request."
@@ -5313,7 +6023,7 @@
       ],
       "expect_status": 200,
       "notes": "Status filter cross-customer; routes to list_all_open_issues with statuses=['in_progress']",
-      "latency_ms": 1941,
+      "latency_ms": 3643,
       "status_code": 200,
       "body": {
         "user": {
@@ -5676,10 +6386,53 @@
               "answer": "No issues are currently in progress across all clients.",
               "auth_mode": "local_header_override",
               "trace_id": "98cddcb8"
+            },
+            {
+              "query": "Show me all issues that are currently in progress across all clients",
+              "plan": {
+                "customer_name": "",
+                "reasoning": "User requests all issues currently in progress across all clients, a portfolio-wide view filtered by status 'in progress'. According to RULE 2 and RULE 3, use list_all_open_issues with status filter 'in_progress'.",
+                "steps": [
+                  {
+                    "tool": "list_all_open_issues",
+                    "args": {
+                      "statuses": [
+                        "in_progress"
+                      ]
+                    }
+                  }
+                ],
+                "available_tools": {
+                  "list_all_open_issues": "List issues across ALL customers. Args: severity (optional: critical/high/medium/low), statuses (optional list: open/in_progress/resolved/waiting \u2014 defaults to [open, in_progress]). USE THIS whenever no specific customer is named.",
+                  "get_customer_profile": "Get the profile for ONE named customer. Args: customer_name (string).",
+                  "get_open_issues": "Get all open issues for ONE named customer. Args: customer_name (string).",
+                  "get_issue_history": "Get update history for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "recommend_next_action": "Create a next action for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "semantic_search_issues": "Find issues by concept/phrase using semantic vector similarity (RAG). Args: query (string). Use for conceptual queries like \"issues similar to rate limiting problems\" or \"find API timeout issues\" when no specific customer is named."
+                },
+                "planner_mode": "llm",
+                "roles_seen": [
+                  "sales_user"
+                ]
+              },
+              "steps": [
+                {
+                  "tool": "list_all_open_issues",
+                  "args": {
+                    "statuses": [
+                      "in_progress"
+                    ]
+                  },
+                  "output": []
+                }
+              ],
+              "answer": "No issues are currently in progress across all clients.",
+              "auth_mode": "local_header_override",
+              "trace_id": "304b93b2"
             }
           ]
         },
-        "trace_id": "98cddcb8"
+        "trace_id": "304b93b2"
       },
       "actual_tools": [
         "list_all_open_issues"
@@ -5700,7 +6453,7 @@
       ],
       "expect_status": 200,
       "notes": "Full 4-tool flow on different customer; exercises MCP history path and Risk/Action Agent",
-      "latency_ms": 7162,
+      "latency_ms": 6198,
       "status_code": 200,
       "body": {
         "user": {
@@ -5710,10 +6463,10 @@
           ],
           "auth_mode": "local_header_override"
         },
-        "answer": "**Nexus Payments Ltd Summary**\n\n- **Profile:** Mid-Market segment, Account Owner: marcus.chen, Account Health: **red**\n- **Open Issues (3 total):**\n  1. **Critical:** ISO 20022 pacs.008 rejection rate at 12% following SWIFT cutover  \n     - Rejection rate rose from 3% to 12% by day 3, with 1,847 payments rejected due to BIC11 validation failures for 6 correspondent banks.  \n     - Interim workaround: rerouting affected payments via legacy MT103 pathway (closing March 2025).  \n     - 4 correspondent banks confirmed migration within 30 days; 2 non-responsive, legal notices being drafted.  \n  2. **High:** PSD2 Open Banking API returning HTTP 429 errors to three regulated TPPs  \n  3. **High:** Chargeback reconciliation lag with 2,400 unmatched transactions pending over 72 hours\n\n- **Risk Assessment:**  \n  - Overall risk level: **Critical** due to the critical severity of the ISO 20022 issue and red account health.  \n  - Urgency: **Immediate**  \n  - Missing information: Issue owner not assigned.\n\n- **Recommended Next Action:**  \n  Escalate the critical ISO 20022 pacs.008 rejection issue immediately to the relevant team. Confirm the full scope of impact, coordinate a fix, assign a dedicated owner, and send a status update to Nexus Payments Ltd once resolution is underway. Escalate to the account executive and support manager without delay.\n\n**Action to take:**  \nInitiate immediate escalation of issue `#6` (\"ISO 20022 pacs.008 rejection rate at 12% following SWIFT cutover\") to the account executive and support manager. Validate customer impact within 2 hours, assign a dedicated owner, and communicate status updates to the customer promptly.",
+        "answer": "**Nexus Payments Ltd Summary**\n\n- **Profile:** Mid-Market segment, Account Owner: marcus.chen, Account Health: **red**\n- **Open Issues (3 total):**\n  1. **Critical:** ISO 20022 pacs.008 rejection rate at 12% following SWIFT cutover (`id: 6`)\n     - Rejection rate rose from 3% to 12% within 3 days.\n     - 1,847 payments rejected due to BIC11 validation failures for 6 correspondent banks.\n     - 4 banks confirmed migration within 30 days; 2 non-responsive, legal notices issued.\n     - Interim workaround: rerouting via legacy MT103 pathway (closing March 2025).\n  2. **High:** PSD2 Open Banking API returning HTTP 429 errors to three regulated TPPs (`id: 7`)\n  3. **High:** Chargeback reconciliation lag with 2,400 unmatched transactions pending over 72 hours (`id: 8`)\n\n- **Risk Assessment:** Critical risk level due to the critical severity issue and red account health. Immediate urgency.\n\n- **Latest History Note (Issue 6):** SWIFT service desk ticket raised; interim workaround in place; legal action underway for non-responsive banks.\n\n**Recommended Next Action:**\n\n- Escalate the critical ISO 20022 pacs.008 rejection issue immediately to the relevant team.\n- Confirm the full scope of customer impact within 2 hours.\n- Assign a dedicated issue owner (currently missing).\n- Coordinate a fix and provide Nexus Payments Ltd with a status update once resolution is underway.\n- Escalate to account executive and support manager without delay.\n\n`Action ID: 42` is proposed for this escalation with due date 2026-06-26.",
         "plan": {
           "customer_name": "Nexus Payments Ltd",
-          "reasoning": "The user requests a full summary for a named client 'Nexus Payments Ltd' and also asks to suggest a next action. According to RULE 4, first get the customer profile, then get open issues, then get issue history (because the user wants a summary), and finally recommend the next action as explicitly requested.",
+          "reasoning": "The user requests a full summary and a next action for a named client, Nexus Payments Ltd. According to rules, first get the customer profile, then get open issues, then get issue history for summary, and finally recommend next action as explicitly requested.",
           "steps": [
             {
               "tool": "get_customer_profile",
@@ -5825,7 +6578,7 @@
               "owner": "eval.support_user"
             },
             "output": {
-              "id": 40,
+              "id": 42,
               "issue_id": 6,
               "action_text": "Escalate \"ISO 20022 pacs.008 rejection rate at 12% following SWIFT cutover\" for Nexus Payments Ltd to the relevant team immediately. Confirm scope of impact, coordinate a fix, and send the customer a status update once resolution is underway.",
               "owner": "eval.support_user",
@@ -6868,10 +7621,176 @@
               "answer": "**Nexus Payments Ltd Summary**\n\n- **Profile:** Mid-Market segment, Account Owner: marcus.chen, Account Health: **red**\n- **Open Issues (3 total):**\n  1. **Critical:** ISO 20022 pacs.008 rejection rate at 12% following SWIFT cutover  \n     - Rejection rate rose from 3% to 12% by day 3, with 1,847 payments rejected due to BIC11 validation failures for 6 correspondent banks.  \n     - Interim workaround: rerouting affected payments via legacy MT103 pathway (closing March 2025).  \n     - 4 correspondent banks confirmed migration within 30 days; 2 non-responsive, legal notices being drafted.  \n  2. **High:** PSD2 Open Banking API returning HTTP 429 errors to three regulated TPPs  \n  3. **High:** Chargeback reconciliation lag with 2,400 unmatched transactions pending over 72 hours\n\n- **Risk Assessment:**  \n  - Overall risk level: **Critical** due to the critical severity of the ISO 20022 issue and red account health.  \n  - Urgency: **Immediate**  \n  - Missing information: Issue owner not assigned.\n\n- **Recommended Next Action:**  \n  Escalate the critical ISO 20022 pacs.008 rejection issue immediately to the relevant team. Confirm the full scope of impact, coordinate a fix, assign a dedicated owner, and send a status update to Nexus Payments Ltd once resolution is underway. Escalate to the account executive and support manager without delay.\n\n**Action to take:**  \nInitiate immediate escalation of issue `#6` (\"ISO 20022 pacs.008 rejection rate at 12% following SWIFT cutover\") to the account executive and support manager. Validate customer impact within 2 hours, assign a dedicated owner, and communicate status updates to the customer promptly.",
               "auth_mode": "local_header_override",
               "trace_id": "84c6363d"
+            },
+            {
+              "query": "Give me the full summary for Nexus Payments Ltd and suggest a next action",
+              "plan": {
+                "customer_name": "Nexus Payments Ltd",
+                "reasoning": "The user requests a full summary and a next action for a named client, Nexus Payments Ltd. According to rules, first get the customer profile, then get open issues, then get issue history for summary, and finally recommend next action as explicitly requested.",
+                "steps": [
+                  {
+                    "tool": "get_customer_profile",
+                    "args": {
+                      "customer_name": "Nexus Payments Ltd"
+                    }
+                  },
+                  {
+                    "tool": "get_open_issues",
+                    "args": {
+                      "customer_name": "Nexus Payments Ltd"
+                    }
+                  },
+                  {
+                    "tool": "get_issue_history",
+                    "args_from": "first_issue_id"
+                  },
+                  {
+                    "tool": "recommend_next_action",
+                    "args_from": "first_issue_id"
+                  }
+                ],
+                "available_tools": {
+                  "list_all_open_issues": "List issues across ALL customers. Args: severity (optional: critical/high/medium/low), statuses (optional list: open/in_progress/resolved/waiting \u2014 defaults to [open, in_progress]). USE THIS whenever no specific customer is named.",
+                  "get_customer_profile": "Get the profile for ONE named customer. Args: customer_name (string).",
+                  "get_open_issues": "Get all open issues for ONE named customer. Args: customer_name (string).",
+                  "get_issue_history": "Get update history for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "recommend_next_action": "Create a next action for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "semantic_search_issues": "Find issues by concept/phrase using semantic vector similarity (RAG). Args: query (string). Use for conceptual queries like \"issues similar to rate limiting problems\" or \"find API timeout issues\" when no specific customer is named."
+                },
+                "planner_mode": "llm",
+                "roles_seen": [
+                  "support_user"
+                ]
+              },
+              "steps": [
+                {
+                  "tool": "get_customer_profile",
+                  "args": {
+                    "customer_name": "Nexus Payments Ltd"
+                  },
+                  "output": {
+                    "id": 3,
+                    "name": "Nexus Payments Ltd",
+                    "segment": "Mid-Market",
+                    "account_owner": "marcus.chen",
+                    "health_status": "red"
+                  }
+                },
+                {
+                  "tool": "get_open_issues",
+                  "args": {
+                    "customer_name": "Nexus Payments Ltd"
+                  },
+                  "output": [
+                    {
+                      "id": 6,
+                      "title": "ISO 20022 pacs.008 rejection rate at 12% following SWIFT cutover",
+                      "severity": "critical",
+                      "status": "open",
+                      "customer_name": "Nexus Payments Ltd"
+                    },
+                    {
+                      "id": 7,
+                      "title": "PSD2 Open Banking API returning HTTP 429 errors to three regulated TPPs",
+                      "severity": "high",
+                      "status": "open",
+                      "customer_name": "Nexus Payments Ltd"
+                    },
+                    {
+                      "id": 8,
+                      "title": "Chargeback reconciliation lag: 2,400 unmatched transactions pending over 72 hours",
+                      "severity": "high",
+                      "status": "open",
+                      "customer_name": "Nexus Payments Ltd"
+                    }
+                  ]
+                },
+                {
+                  "tool": "get_issue_history",
+                  "args": {
+                    "issue_id": 6
+                  },
+                  "output": [
+                    {
+                      "issue_id": 6,
+                      "update_text": "Rejection rate climbed from 3% on go-live day to 12% by day 3. Total 1,847 pacs.008 payments rejected by correspondent banks. Primary reason: BIC11 validation failing for 6 respondent banks not yet migrated to ISO 20022.",
+                      "updated_by": "dev.lead",
+                      "created_at": "2026-06-25T14:09:42.132709"
+                    },
+                    {
+                      "issue_id": 6,
+                      "update_text": "SWIFT service desk ticket raised (ref SWIFT-2024-00341). Interim workaround agreed: affected payments re-routed via legacy MT103 pathway. Note: this fallback pathway closes in March 2025.",
+                      "updated_by": "ops.manager",
+                      "created_at": "2026-06-25T14:09:42.132995"
+                    },
+                    {
+                      "issue_id": 6,
+                      "update_text": "All 6 affected BICs identified. 4 have confirmed migration timelines within 30 days. 2 have not responded to outreach. Legal team drafting contractual compliance notices to non-responsive correspondents.",
+                      "updated_by": "compliance.lead",
+                      "created_at": "2026-06-25T14:09:42.133548"
+                    }
+                  ]
+                },
+                {
+                  "tool": "recommend_next_action",
+                  "args": {
+                    "issue_id": 6,
+                    "owner": "eval.support_user"
+                  },
+                  "output": {
+                    "id": 42,
+                    "issue_id": 6,
+                    "action_text": "Escalate \"ISO 20022 pacs.008 rejection rate at 12% following SWIFT cutover\" for Nexus Payments Ltd to the relevant team immediately. Confirm scope of impact, coordinate a fix, and send the customer a status update once resolution is underway.",
+                    "owner": "eval.support_user",
+                    "due_date": "2026-06-26",
+                    "status": "proposed"
+                  }
+                },
+                {
+                  "skill": "risk_action_agent",
+                  "output": {
+                    "selected_primary_issue": {
+                      "id": 6,
+                      "title": "ISO 20022 pacs.008 rejection rate at 12% following SWIFT cutover",
+                      "severity": "critical",
+                      "status": "open",
+                      "customer_name": "Nexus Payments Ltd"
+                    },
+                    "customer_name": "Nexus Payments Ltd",
+                    "executive_summary": "Nexus Payments Ltd has 3 open issue(s). Highest severity: Critical. Account health: red.",
+                    "customer_health": "red",
+                    "risk_level": "Critical",
+                    "rationale": "Critical-severity issue present; account health is red (critical account); 3 open issues unresolved",
+                    "urgency": "immediate",
+                    "recommended_next_action": "Escalate to account executive immediately. Validate customer impact within 2 hours, assign dedicated owner, and send a status update to the customer.",
+                    "owner_suggestion": "Escalate to account executive and support manager immediately.",
+                    "missing_information": [
+                      "Issue owner not assigned"
+                    ],
+                    "evidence_used": {
+                      "customer_id": 3,
+                      "issue_ids": [
+                        6,
+                        7,
+                        8
+                      ],
+                      "history_events": 3,
+                      "sources": [
+                        "customers",
+                        "issues",
+                        "issue_updates"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "answer": "**Nexus Payments Ltd Summary**\n\n- **Profile:** Mid-Market segment, Account Owner: marcus.chen, Account Health: **red**\n- **Open Issues (3 total):**\n  1. **Critical:** ISO 20022 pacs.008 rejection rate at 12% following SWIFT cutover (`id: 6`)\n     - Rejection rate rose from 3% to 12% within 3 days.\n     - 1,847 payments rejected due to BIC11 validation failures for 6 correspondent banks.\n     - 4 banks confirmed migration within 30 days; 2 non-responsive, legal notices issued.\n     - Interim workaround: rerouting via legacy MT103 pathway (closing March 2025).\n  2. **High:** PSD2 Open Banking API returning HTTP 429 errors to three regulated TPPs (`id: 7`)\n  3. **High:** Chargeback reconciliation lag with 2,400 unmatched transactions pending over 72 hours (`id: 8`)\n\n- **Risk Assessment:** Critical risk level due to the critical severity issue and red account health. Immediate urgency.\n\n- **Latest History Note (Issue 6):** SWIFT service desk ticket raised; interim workaround in place; legal action underway for non-responsive banks.\n\n**Recommended Next Action:**\n\n- Escalate the critical ISO 20022 pacs.008 rejection issue immediately to the relevant team.\n- Confirm the full scope of customer impact within 2 hours.\n- Assign a dedicated issue owner (currently missing).\n- Coordinate a fix and provide Nexus Payments Ltd with a status update once resolution is underway.\n- Escalate to account executive and support manager without delay.\n\n`Action ID: 42` is proposed for this escalation with due date 2026-06-26.",
+              "auth_mode": "local_header_override",
+              "trace_id": "6f8df041"
             }
           ]
         },
-        "trace_id": "84c6363d"
+        "trace_id": "6f8df041"
       },
       "actual_tools": [
         "get_customer_profile",
@@ -6892,7 +7811,7 @@
       ],
       "expect_status": 200,
       "notes": "Admin role portfolio query; verifies admin role allowed for read paths",
-      "latency_ms": 3930,
+      "latency_ms": 3793,
       "status_code": 200,
       "body": {
         "user": {
@@ -6902,7 +7821,7 @@
           ],
           "auth_mode": "local_header_override"
         },
-        "answer": "**Critical issues across all clients:**\n\n- **Pinnacle Bancorp**\n  - `ID 1`: Core banking EOD batch failure: GL balance posting incomplete (Severity: Critical, Status: Open, Health: Red)\n\n- **Apex Clearing Services**\n  - `ID 4`: FIX drop-copy session disconnects causing unreported trades at market open (Severity: Critical, Status: Open, Health: Red)\n\n- **Nexus Payments Ltd**\n  - `ID 6`: ISO 20022 pacs.008 rejection rate at 12% following SWIFT cutover (Severity: Critical, Status: Open, Health: Red)\n\nAll three critical issues have a red health status, indicating severe operational risk.\n\n**Recommended action:** Immediate investigation and resolution are required for all critical issues to prevent financial and operational impact. Prioritize based on client impact and issue complexity.",
+        "answer": "**Critical and High Severity Issues Across All Clients:**\n\n- **Pinnacle Bancorp**\n  - [ID: 1] Core banking EOD batch failure: GL balance posting incomplete (Critical, Open, Health: Red)\n\n- **Apex Clearing Services**\n  - [ID: 4] FIX drop-copy session disconnects causing unreported trades at market open (Critical, Open, Health: Red)\n\n- **Nexus Payments Ltd**\n  - [ID: 6] ISO 20022 pacs.008 rejection rate at 12% following SWIFT cutover (Critical, Open, Health: Red)\n\nAll listed issues are critical, open, and have a red health status, indicating urgent attention is required.\n\n**Recommended Action:** Prioritize immediate investigation and resolution of these critical issues to mitigate operational and financial risks.",
         "plan": {
           "customer_name": "",
           "reasoning": "User requests a list of all critical and high severity issues across all clients, which is a portfolio-wide query with severity filtering. According to RULE 2, use list_all_open_issues with severity filter. According to RULE 3, no status specified, so default to open + in_progress (omit statuses).",
@@ -7367,10 +8286,77 @@
               "answer": "**Critical issues across all clients:**\n\n- **Pinnacle Bancorp**\n  - `ID 1`: Core banking EOD batch failure: GL balance posting incomplete (Severity: Critical, Status: Open, Health: Red)\n\n- **Apex Clearing Services**\n  - `ID 4`: FIX drop-copy session disconnects causing unreported trades at market open (Severity: Critical, Status: Open, Health: Red)\n\n- **Nexus Payments Ltd**\n  - `ID 6`: ISO 20022 pacs.008 rejection rate at 12% following SWIFT cutover (Severity: Critical, Status: Open, Health: Red)\n\nAll three critical issues have a red health status, indicating severe operational risk.\n\n**Recommended action:** Immediate investigation and resolution are required for all critical issues to prevent financial and operational impact. Prioritize based on client impact and issue complexity.",
               "auth_mode": "local_header_override",
               "trace_id": "69572da6"
+            },
+            {
+              "query": "List all critical and high severity issues across all clients",
+              "plan": {
+                "customer_name": "",
+                "reasoning": "User requests a list of all critical and high severity issues across all clients, which is a portfolio-wide query with severity filtering. According to RULE 2, use list_all_open_issues with severity filter. According to RULE 3, no status specified, so default to open + in_progress (omit statuses).",
+                "steps": [
+                  {
+                    "tool": "list_all_open_issues",
+                    "args": {
+                      "severity": "critical"
+                    }
+                  }
+                ],
+                "available_tools": {
+                  "list_all_open_issues": "List issues across ALL customers. Args: severity (optional: critical/high/medium/low), statuses (optional list: open/in_progress/resolved/waiting \u2014 defaults to [open, in_progress]). USE THIS whenever no specific customer is named.",
+                  "get_customer_profile": "Get the profile for ONE named customer. Args: customer_name (string).",
+                  "get_open_issues": "Get all open issues for ONE named customer. Args: customer_name (string).",
+                  "get_issue_history": "Get update history for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "recommend_next_action": "Create a next action for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "semantic_search_issues": "Find issues by concept/phrase using semantic vector similarity (RAG). Args: query (string). Use for conceptual queries like \"issues similar to rate limiting problems\" or \"find API timeout issues\" when no specific customer is named."
+                },
+                "planner_mode": "llm",
+                "roles_seen": [
+                  "admin"
+                ]
+              },
+              "steps": [
+                {
+                  "tool": "list_all_open_issues",
+                  "args": {
+                    "severity": "critical"
+                  },
+                  "output": [
+                    {
+                      "id": 4,
+                      "title": "FIX drop-copy session disconnects causing unreported trades at market open",
+                      "severity": "critical",
+                      "status": "open",
+                      "created_at": "2026-06-25T14:09:42.123500",
+                      "customer_name": "Apex Clearing Services",
+                      "health_status": "red"
+                    },
+                    {
+                      "id": 6,
+                      "title": "ISO 20022 pacs.008 rejection rate at 12% following SWIFT cutover",
+                      "severity": "critical",
+                      "status": "open",
+                      "created_at": "2026-06-25T14:09:42.124793",
+                      "customer_name": "Nexus Payments Ltd",
+                      "health_status": "red"
+                    },
+                    {
+                      "id": 1,
+                      "title": "Core banking EOD batch failure: GL balance posting incomplete",
+                      "severity": "critical",
+                      "status": "open",
+                      "created_at": "2026-06-25T14:09:42.121807",
+                      "customer_name": "Pinnacle Bancorp",
+                      "health_status": "red"
+                    }
+                  ]
+                }
+              ],
+              "answer": "**Critical and High Severity Issues Across All Clients:**\n\n- **Pinnacle Bancorp**\n  - [ID: 1] Core banking EOD batch failure: GL balance posting incomplete (Critical, Open, Health: Red)\n\n- **Apex Clearing Services**\n  - [ID: 4] FIX drop-copy session disconnects causing unreported trades at market open (Critical, Open, Health: Red)\n\n- **Nexus Payments Ltd**\n  - [ID: 6] ISO 20022 pacs.008 rejection rate at 12% following SWIFT cutover (Critical, Open, Health: Red)\n\nAll listed issues are critical, open, and have a red health status, indicating urgent attention is required.\n\n**Recommended Action:** Prioritize immediate investigation and resolution of these critical issues to mitigate operational and financial risks.",
+              "auth_mode": "local_header_override",
+              "trace_id": "ca879d6e"
             }
           ]
         },
-        "trace_id": "69572da6"
+        "trace_id": "ca879d6e"
       },
       "actual_tools": [
         "list_all_open_issues"
@@ -7390,7 +8376,7 @@
       ],
       "expect_status": 200,
       "notes": "Single-customer summary with history; exercises deterministic primary-issue selection and MCP history path",
-      "latency_ms": 5160,
+      "latency_ms": 4273,
       "status_code": 200,
       "body": {
         "user": {
@@ -7400,7 +8386,7 @@
           ],
           "auth_mode": "local_header_override"
         },
-        "answer": "**Meridian Capital Group** (Enterprise segment, Account Owner: james.whitfield) currently has an **amber** health status with a **High** risk level due to one open issue:\n\n- **Issue #9:** \"T+2 settlement reconciliation breaks on multi-leg equity structured trades\" (Severity: High, Status: Open)\n\n**Issue History:**\n- Reconciliation engine flagged 47 unmatched multi-leg structured equity trades from the Wednesday session, failing to match BNY Mellon custodian confirmations.\n- BNY Mellon confirmed their records are correct; root cause identified as internal aggregation logic incorrectly de-duplicating legs for netted wash trades within the same portfolio and ISIN.\n- A patch correcting the netted position logic was developed and deployed to UAT, successfully re-matching all 47 trades. Awaiting Operations Director sign-off before production deployment.\n\n**Risk Assessment:**\n- High severity issue with amber account health.\n- No issue owner currently assigned.\n\n**Recommended Next Action:**\n- Assign the issue to a support manager immediately.\n- Validate the customer impact today.\n- Provide a status update to Meridian Capital Group within 4 hours.\n- Loop in the account owner, james.whitfield, in communications.",
+        "answer": "**Meridian Capital Group** (Enterprise segment, Account Owner: james.whitfield) currently has an **amber** health status with a **High-risk** level due to one open critical issue:\n\n- **Issue ID `9`:** \"T+2 settlement reconciliation breaks on multi-leg equity structured trades\" (Severity: High, Status: Open)\n  - Reconciliation engine flagged 47 unmatched multi-leg structured equity trades (more than 3 legs) failing to match BNY Mellon custodian confirmations.\n  - BNY Mellon confirmed their records are correct; root cause identified as internal aggregation logic incorrectly de-duplicating legs for netted wash trades on the same ISIN.\n  - A patch correcting the netted position logic was developed, deployed to UAT, and successfully re-matched all 47 trades. Awaiting Operations Director sign-off before production deployment.\n\n**Risk Assessment:**  \n- High severity issue combined with amber account health results in a High overall risk level.  \n- No issue owner currently assigned.\n\n**Recommended Next Actions (Urgency: Today):**  \n- Assign the issue to a support manager immediately and involve the account owner (james.whitfield).  \n- Validate the customer impact without delay.  \n- Provide Meridian Capital Group with a status update within 4 hours.",
         "plan": {
           "customer_name": "Meridian Capital Group",
           "reasoning": "The user requests a summary of the latest status and history for a named client, Meridian Capital Group. According to rules, first get the customer profile, then get open issues, and finally get issue history since the query includes 'status' and 'history'.",
@@ -8313,10 +9299,141 @@
               "answer": "**Meridian Capital Group** (Enterprise segment, Account Owner: james.whitfield) currently has an **amber** health status with a **High** risk level due to one open issue:\n\n- **Issue #9:** \"T+2 settlement reconciliation breaks on multi-leg equity structured trades\" (Severity: High, Status: Open)\n\n**Issue History:**\n- Reconciliation engine flagged 47 unmatched multi-leg structured equity trades from the Wednesday session, failing to match BNY Mellon custodian confirmations.\n- BNY Mellon confirmed their records are correct; root cause identified as internal aggregation logic incorrectly de-duplicating legs for netted wash trades within the same portfolio and ISIN.\n- A patch correcting the netted position logic was developed and deployed to UAT, successfully re-matching all 47 trades. Awaiting Operations Director sign-off before production deployment.\n\n**Risk Assessment:**\n- High severity issue with amber account health.\n- No issue owner currently assigned.\n\n**Recommended Next Action:**\n- Assign the issue to a support manager immediately.\n- Validate the customer impact today.\n- Provide a status update to Meridian Capital Group within 4 hours.\n- Loop in the account owner, james.whitfield, in communications.",
               "auth_mode": "local_header_override",
               "trace_id": "3dad40c6"
+            },
+            {
+              "query": "Summarise the latest status and history for Meridian Capital Group",
+              "plan": {
+                "customer_name": "Meridian Capital Group",
+                "reasoning": "The user requests a summary of the latest status and history for a named client, Meridian Capital Group. According to rules, first get the customer profile, then get open issues, and finally get issue history since the query includes 'status' and 'history'.",
+                "steps": [
+                  {
+                    "tool": "get_customer_profile",
+                    "args": {
+                      "customer_name": "Meridian Capital Group"
+                    }
+                  },
+                  {
+                    "tool": "get_open_issues",
+                    "args": {
+                      "customer_name": "Meridian Capital Group"
+                    }
+                  },
+                  {
+                    "tool": "get_issue_history",
+                    "args_from": "first_issue_id"
+                  }
+                ],
+                "available_tools": {
+                  "list_all_open_issues": "List issues across ALL customers. Args: severity (optional: critical/high/medium/low), statuses (optional list: open/in_progress/resolved/waiting \u2014 defaults to [open, in_progress]). USE THIS whenever no specific customer is named.",
+                  "get_customer_profile": "Get the profile for ONE named customer. Args: customer_name (string).",
+                  "get_open_issues": "Get all open issues for ONE named customer. Args: customer_name (string).",
+                  "get_issue_history": "Get update history for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "recommend_next_action": "Create a next action for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "semantic_search_issues": "Find issues by concept/phrase using semantic vector similarity (RAG). Args: query (string). Use for conceptual queries like \"issues similar to rate limiting problems\" or \"find API timeout issues\" when no specific customer is named."
+                },
+                "planner_mode": "llm",
+                "roles_seen": [
+                  "support_user"
+                ]
+              },
+              "steps": [
+                {
+                  "tool": "get_customer_profile",
+                  "args": {
+                    "customer_name": "Meridian Capital Group"
+                  },
+                  "output": {
+                    "id": 4,
+                    "name": "Meridian Capital Group",
+                    "segment": "Enterprise",
+                    "account_owner": "james.whitfield",
+                    "health_status": "amber"
+                  }
+                },
+                {
+                  "tool": "get_open_issues",
+                  "args": {
+                    "customer_name": "Meridian Capital Group"
+                  },
+                  "output": [
+                    {
+                      "id": 9,
+                      "title": "T+2 settlement reconciliation breaks on multi-leg equity structured trades",
+                      "severity": "high",
+                      "status": "open",
+                      "customer_name": "Meridian Capital Group"
+                    }
+                  ]
+                },
+                {
+                  "tool": "get_issue_history",
+                  "args": {
+                    "issue_id": 9
+                  },
+                  "output": [
+                    {
+                      "issue_id": 9,
+                      "update_text": "Reconciliation engine flagged 47 unmatched trades from Wednesday session. All failures are multi-leg structured equity strategies with more than 3 legs, not matching against BNY Mellon custodian confirmations.",
+                      "updated_by": "ops.lead",
+                      "created_at": "2026-06-25T14:09:42.135427"
+                    },
+                    {
+                      "issue_id": 9,
+                      "update_text": "BNY Mellon confirm their records are correct. Root cause: internal aggregation logic for netted wash trades within the same portfolio on the same ISIN is incorrectly de-duplicating legs.",
+                      "updated_by": "support.analyst",
+                      "created_at": "2026-06-25T14:09:42.135879"
+                    },
+                    {
+                      "issue_id": 9,
+                      "update_text": "Patch developed to correct the netted position logic. Deployed to UAT. All 47 historical trades re-matched successfully in UAT environment. Awaiting Operations Director sign-off before production deployment.",
+                      "updated_by": "dev.lead",
+                      "created_at": "2026-06-25T14:09:42.136290"
+                    }
+                  ]
+                },
+                {
+                  "skill": "risk_action_agent",
+                  "output": {
+                    "selected_primary_issue": {
+                      "id": 9,
+                      "title": "T+2 settlement reconciliation breaks on multi-leg equity structured trades",
+                      "severity": "high",
+                      "status": "open",
+                      "customer_name": "Meridian Capital Group"
+                    },
+                    "customer_name": "Meridian Capital Group",
+                    "executive_summary": "Meridian Capital Group has 1 open issue(s). Highest severity: High. Account health: amber.",
+                    "customer_health": "amber",
+                    "risk_level": "High",
+                    "rationale": "High-severity issue present; account health is amber",
+                    "urgency": "today",
+                    "recommended_next_action": "Assign owner and validate customer impact today. Provide a status update within 4 hours.",
+                    "owner_suggestion": "Assign to support manager; loop in account owner.",
+                    "missing_information": [
+                      "Issue owner not assigned"
+                    ],
+                    "evidence_used": {
+                      "customer_id": 4,
+                      "issue_ids": [
+                        9
+                      ],
+                      "history_events": 3,
+                      "sources": [
+                        "customers",
+                        "issues",
+                        "issue_updates"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "answer": "**Meridian Capital Group** (Enterprise segment, Account Owner: james.whitfield) currently has an **amber** health status with a **High-risk** level due to one open critical issue:\n\n- **Issue ID `9`:** \"T+2 settlement reconciliation breaks on multi-leg equity structured trades\" (Severity: High, Status: Open)\n  - Reconciliation engine flagged 47 unmatched multi-leg structured equity trades (more than 3 legs) failing to match BNY Mellon custodian confirmations.\n  - BNY Mellon confirmed their records are correct; root cause identified as internal aggregation logic incorrectly de-duplicating legs for netted wash trades on the same ISIN.\n  - A patch correcting the netted position logic was developed, deployed to UAT, and successfully re-matched all 47 trades. Awaiting Operations Director sign-off before production deployment.\n\n**Risk Assessment:**  \n- High severity issue combined with amber account health results in a High overall risk level.  \n- No issue owner currently assigned.\n\n**Recommended Next Actions (Urgency: Today):**  \n- Assign the issue to a support manager immediately and involve the account owner (james.whitfield).  \n- Validate the customer impact without delay.  \n- Provide Meridian Capital Group with a status update within 4 hours.",
+              "auth_mode": "local_header_override",
+              "trace_id": "349227e4"
             }
           ]
         },
-        "trace_id": "3dad40c6"
+        "trace_id": "349227e4"
       },
       "actual_tools": [
         "get_customer_profile",
@@ -8336,7 +9453,7 @@
       ],
       "expect_status": 200,
       "notes": "Semantic/RAG path; conceptual query without named customer routes to semantic_search_issues",
-      "latency_ms": 3850,
+      "latency_ms": 2921,
       "status_code": 200,
       "body": {
         "user": {
@@ -8349,7 +9466,7 @@
         "answer": "**Nexus Payments Ltd**  \n- Issue: PSD2 Open Banking API returning HTTP 429 errors to three regulated TPPs  \n- Severity: **High**  \n- Status: Open  \n- Risk: High risk of service disruption due to rate limiting impacting third-party providers.\n\nOther issues found are unrelated to rate limiting or API throttling.\n\n**Recommended action:** Prioritize investigation and mitigation of the HTTP 429 errors to restore API availability and compliance with PSD2 requirements.",
         "plan": {
           "customer_name": "",
-          "reasoning": "The query is a conceptual search for issues related to 'rate limiting or API throttling' without specifying a customer. According to RULE 1, use semantic_search_issues with the query and set customer_name to empty.",
+          "reasoning": "The query is a conceptual search for issues related to 'rate limiting or API throttling' without specifying a customer name. According to RULE 1, use semantic_search_issues with the query and set customer_name to empty.",
           "steps": [
             {
               "tool": "semantic_search_issues",
@@ -8953,6 +10070,86 @@
                       "severity": "high",
                       "status": "open",
                       "customer_name": "Nexus Payments Ltd",
+                      "similarity": "0.376"
+                    },
+                    {
+                      "id": 12,
+                      "title": "Client portal P99 latency degraded to 8.2s against 2s contractual SLA",
+                      "severity": "medium",
+                      "status": "open",
+                      "customer_name": "Fortuna Wealth Management",
+                      "similarity": "0.370"
+                    },
+                    {
+                      "id": 2,
+                      "title": "AML screening queue backlog breaching 4-hour SLA threshold",
+                      "severity": "high",
+                      "status": "open",
+                      "customer_name": "Pinnacle Bancorp",
+                      "similarity": "0.366"
+                    },
+                    {
+                      "id": 3,
+                      "title": "Mobile banking 504 timeouts during morning peak 09:00-11:00 GMT",
+                      "severity": "high",
+                      "status": "open",
+                      "customer_name": "Pinnacle Bancorp",
+                      "similarity": "0.325"
+                    },
+                    {
+                      "id": 13,
+                      "title": "Bloomberg B-PIPE feed drops causing NAV calculation delays on 3 funds",
+                      "severity": "high",
+                      "status": "in_progress",
+                      "customer_name": "Sterling Asset Management",
+                      "similarity": "0.318"
+                    }
+                  ]
+                }
+              ],
+              "answer": "**Nexus Payments Ltd**  \n- Issue: PSD2 Open Banking API returning HTTP 429 errors to three regulated TPPs  \n- Severity: **High**  \n- Status: Open  \n- Risk: High risk of service disruption due to rate limiting impacting third-party providers.\n\nOther issues found are unrelated to rate limiting or API throttling.\n\n**Recommended action:** Prioritize investigation and mitigation of the HTTP 429 errors to restore API availability and compliance with PSD2 requirements.",
+              "auth_mode": "local_header_override",
+              "trace_id": "ff739978"
+            },
+            {
+              "query": "Find issues related to rate limiting or API throttling",
+              "plan": {
+                "customer_name": "",
+                "reasoning": "The query is a conceptual search for issues related to 'rate limiting or API throttling' without specifying a customer name. According to RULE 1, use semantic_search_issues with the query and set customer_name to empty.",
+                "steps": [
+                  {
+                    "tool": "semantic_search_issues",
+                    "args": {
+                      "query": "rate limiting or API throttling"
+                    }
+                  }
+                ],
+                "available_tools": {
+                  "list_all_open_issues": "List issues across ALL customers. Args: severity (optional: critical/high/medium/low), statuses (optional list: open/in_progress/resolved/waiting \u2014 defaults to [open, in_progress]). USE THIS whenever no specific customer is named.",
+                  "get_customer_profile": "Get the profile for ONE named customer. Args: customer_name (string).",
+                  "get_open_issues": "Get all open issues for ONE named customer. Args: customer_name (string).",
+                  "get_issue_history": "Get update history for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "recommend_next_action": "Create a next action for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "semantic_search_issues": "Find issues by concept/phrase using semantic vector similarity (RAG). Args: query (string). Use for conceptual queries like \"issues similar to rate limiting problems\" or \"find API timeout issues\" when no specific customer is named."
+                },
+                "planner_mode": "llm",
+                "roles_seen": [
+                  "support_user"
+                ]
+              },
+              "steps": [
+                {
+                  "tool": "semantic_search_issues",
+                  "args": {
+                    "query": "rate limiting or API throttling"
+                  },
+                  "output": [
+                    {
+                      "id": 7,
+                      "title": "PSD2 Open Banking API returning HTTP 429 errors to three regulated TPPs",
+                      "severity": "high",
+                      "status": "open",
+                      "customer_name": "Nexus Payments Ltd",
                       "similarity": 0.376
                     },
                     {
@@ -8992,11 +10189,11 @@
               ],
               "answer": "**Nexus Payments Ltd**  \n- Issue: PSD2 Open Banking API returning HTTP 429 errors to three regulated TPPs  \n- Severity: **High**  \n- Status: Open  \n- Risk: High risk of service disruption due to rate limiting impacting third-party providers.\n\nOther issues found are unrelated to rate limiting or API throttling.\n\n**Recommended action:** Prioritize investigation and mitigation of the HTTP 429 errors to restore API availability and compliance with PSD2 requirements.",
               "auth_mode": "local_header_override",
-              "trace_id": "ff739978"
+              "trace_id": "14bf9f89"
             }
           ]
         },
-        "trace_id": "ff739978"
+        "trace_id": "14bf9f89"
       },
       "actual_tools": [
         "semantic_search_issues"
@@ -9015,7 +10212,7 @@
       ],
       "expect_status": 200,
       "notes": "Admin role on single-customer query; verifies admin can read any customer",
-      "latency_ms": 5056,
+      "latency_ms": 3418,
       "status_code": 200,
       "body": {
         "user": {
@@ -9025,10 +10222,10 @@
           ],
           "auth_mode": "local_header_override"
         },
-        "answer": "**Pinnacle Bancorp** (Enterprise segment, Account Owner: alice.sales) currently has **3 open issues** with a **Critical risk level** and overall account health status **red**.\n\nOpen issues (sorted by severity):\n- [Critical] `#1` Core banking EOD batch failure: GL balance posting incomplete\n- [High] `#2` AML screening queue backlog breaching 4-hour SLA threshold\n- [High] `#3` Mobile banking 504 timeouts during morning peak 09:00-11:00 GMT\n\nRisk assessment:\n- Critical severity issue present\n- Account health is red (critical)\n- No issue history or assigned owners on record\n- 3 unresolved open issues\n\n**Recommended next action:**\n- Escalate immediately to the account executive and support manager\n- Validate customer impact within 2 hours\n- Assign a dedicated issue owner\n- Send a status update to the customer\n\nThis is an urgent situation requiring immediate escalation and customer communication.",
+        "answer": "**Pinnacle Bancorp** (Enterprise segment, Account Owner: alice.sales) has a **Critical** risk level with a red health status.\n\n**Open issues:**\n- [Critical] `#1` Core banking EOD batch failure: GL balance posting incomplete\n- [High] `#2` AML screening queue backlog breaching 4-hour SLA threshold\n- [High] `#3` Mobile banking 504 timeouts during morning peak 09:00-11:00 GMT\n\n**Risk assessment:**\n- Critical severity issue present\n- Account health is red\n- 3 open issues unresolved\n- No issue history or assigned owner on record\n\n**Recommended next action:**\n- Escalate to account executive and support manager immediately\n- Validate customer impact within 2 hours\n- Assign a dedicated owner for issue resolution\n- Send a status update to the customer promptly",
         "plan": {
           "customer_name": "Pinnacle Bancorp",
-          "reasoning": "The user requests all open issues for a named client Pinnacle Bancorp. According to rules, first get the customer profile, then get open issues for that client. The query specifies 'open' issues, so filter by open status.",
+          "reasoning": "The user requests all open issues for a named client Pinnacle Bancorp. According to rules, first get the customer profile, then get open issues for that client. No request for history or next action, so those steps are not needed.",
           "steps": [
             {
               "tool": "get_customer_profile",
@@ -9840,10 +11037,127 @@
               "answer": "**Pinnacle Bancorp** (Enterprise segment, Account Owner: alice.sales) currently has **3 open issues** with a **Critical risk level** and overall account health status **red**.\n\nOpen issues (sorted by severity):\n- [Critical] `#1` Core banking EOD batch failure: GL balance posting incomplete\n- [High] `#2` AML screening queue backlog breaching 4-hour SLA threshold\n- [High] `#3` Mobile banking 504 timeouts during morning peak 09:00-11:00 GMT\n\nRisk assessment:\n- Critical severity issue present\n- Account health is red (critical)\n- No issue history or assigned owners on record\n- 3 unresolved open issues\n\n**Recommended next action:**\n- Escalate immediately to the account executive and support manager\n- Validate customer impact within 2 hours\n- Assign a dedicated issue owner\n- Send a status update to the customer\n\nThis is an urgent situation requiring immediate escalation and customer communication.",
               "auth_mode": "local_header_override",
               "trace_id": "a1c4ca7b"
+            },
+            {
+              "query": "Show me all open issues for Pinnacle Bancorp",
+              "plan": {
+                "customer_name": "Pinnacle Bancorp",
+                "reasoning": "The user requests all open issues for a named client Pinnacle Bancorp. According to rules, first get the customer profile, then get open issues for that client. No request for history or next action, so those steps are not needed.",
+                "steps": [
+                  {
+                    "tool": "get_customer_profile",
+                    "args": {
+                      "customer_name": "Pinnacle Bancorp"
+                    }
+                  },
+                  {
+                    "tool": "get_open_issues",
+                    "args": {
+                      "customer_name": "Pinnacle Bancorp"
+                    }
+                  }
+                ],
+                "available_tools": {
+                  "list_all_open_issues": "List issues across ALL customers. Args: severity (optional: critical/high/medium/low), statuses (optional list: open/in_progress/resolved/waiting \u2014 defaults to [open, in_progress]). USE THIS whenever no specific customer is named.",
+                  "get_customer_profile": "Get the profile for ONE named customer. Args: customer_name (string).",
+                  "get_open_issues": "Get all open issues for ONE named customer. Args: customer_name (string).",
+                  "get_issue_history": "Get update history for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "recommend_next_action": "Create a next action for a specific issue. Args: issue_id (int). Requires get_open_issues first.",
+                  "semantic_search_issues": "Find issues by concept/phrase using semantic vector similarity (RAG). Args: query (string). Use for conceptual queries like \"issues similar to rate limiting problems\" or \"find API timeout issues\" when no specific customer is named."
+                },
+                "planner_mode": "llm",
+                "roles_seen": [
+                  "admin"
+                ]
+              },
+              "steps": [
+                {
+                  "tool": "get_customer_profile",
+                  "args": {
+                    "customer_name": "Pinnacle Bancorp"
+                  },
+                  "output": {
+                    "id": 1,
+                    "name": "Pinnacle Bancorp",
+                    "segment": "Enterprise",
+                    "account_owner": "alice.sales",
+                    "health_status": "red"
+                  }
+                },
+                {
+                  "tool": "get_open_issues",
+                  "args": {
+                    "customer_name": "Pinnacle Bancorp"
+                  },
+                  "output": [
+                    {
+                      "id": 1,
+                      "title": "Core banking EOD batch failure: GL balance posting incomplete",
+                      "severity": "critical",
+                      "status": "open",
+                      "customer_name": "Pinnacle Bancorp"
+                    },
+                    {
+                      "id": 2,
+                      "title": "AML screening queue backlog breaching 4-hour SLA threshold",
+                      "severity": "high",
+                      "status": "open",
+                      "customer_name": "Pinnacle Bancorp"
+                    },
+                    {
+                      "id": 3,
+                      "title": "Mobile banking 504 timeouts during morning peak 09:00-11:00 GMT",
+                      "severity": "high",
+                      "status": "open",
+                      "customer_name": "Pinnacle Bancorp"
+                    }
+                  ]
+                },
+                {
+                  "skill": "risk_action_agent",
+                  "output": {
+                    "selected_primary_issue": {
+                      "id": 1,
+                      "title": "Core banking EOD batch failure: GL balance posting incomplete",
+                      "severity": "critical",
+                      "status": "open",
+                      "customer_name": "Pinnacle Bancorp"
+                    },
+                    "customer_name": "Pinnacle Bancorp",
+                    "executive_summary": "Pinnacle Bancorp has 3 open issue(s). Highest severity: Critical. Account health: red.",
+                    "customer_health": "red",
+                    "risk_level": "Critical",
+                    "rationale": "Critical-severity issue present; account health is red (critical account); 3 open issues unresolved; no issue history on record",
+                    "urgency": "immediate",
+                    "recommended_next_action": "Escalate to account executive immediately. Validate customer impact within 2 hours, assign dedicated owner, and send a status update to the customer.",
+                    "owner_suggestion": "Escalate to account executive and support manager immediately.",
+                    "missing_information": [
+                      "Issue history missing",
+                      "Issue owner not assigned"
+                    ],
+                    "evidence_used": {
+                      "customer_id": 1,
+                      "issue_ids": [
+                        1,
+                        2,
+                        3
+                      ],
+                      "history_events": 0,
+                      "sources": [
+                        "customers",
+                        "issues"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "answer": "**Pinnacle Bancorp** (Enterprise segment, Account Owner: alice.sales) has a **Critical** risk level with a red health status.\n\n**Open issues:**\n- [Critical] `#1` Core banking EOD batch failure: GL balance posting incomplete\n- [High] `#2` AML screening queue backlog breaching 4-hour SLA threshold\n- [High] `#3` Mobile banking 504 timeouts during morning peak 09:00-11:00 GMT\n\n**Risk assessment:**\n- Critical severity issue present\n- Account health is red\n- 3 open issues unresolved\n- No issue history or assigned owner on record\n\n**Recommended next action:**\n- Escalate to account executive and support manager immediately\n- Validate customer impact within 2 hours\n- Assign a dedicated owner for issue resolution\n- Send a status update to the customer promptly",
+              "auth_mode": "local_header_override",
+              "trace_id": "5cce393f"
             }
           ]
         },
-        "trace_id": "a1c4ca7b"
+        "trace_id": "5cce393f"
       },
       "actual_tools": [
         "get_customer_profile",

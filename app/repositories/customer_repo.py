@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from sqlalchemy import text
 from core.db import SessionLocal
 
@@ -113,7 +115,7 @@ def find_customer_matches(partial: str) -> tuple:
                 FROM customers
                 WHERE EXISTS (
                     SELECT 1
-                    FROM regexp_split_to_table(LOWER(name), '\s+') AS word
+                    FROM regexp_split_to_table(LOWER(name), '\\s+') AS word
                     WHERE similarity(word, LOWER(:n)) > 0.35
                 )
                 LIMIT 3

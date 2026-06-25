@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import httpx
 from core.config import MCP_SERVER_URL, MCP_SECRET
 from repositories.customer_repo import (

@@ -1,4 +1,4 @@
-.PHONY: up down logs eval demo verify clean
+.PHONY: up down logs eval test demo verify clean
 
 ## Start the full stack (build if needed)
 up:
@@ -12,10 +12,15 @@ down:
 logs:
 	docker compose logs -f app
 
-## Run the evaluation harness
+## Run unit tests (no DB, no network)
+test:
+	pip3 install -q pytest pytest-mock fastapi
+	PYTHONPATH=app python3 -m pytest tests/ -v
+
+## Run the evaluation harness (requires running stack)
 eval:
-	pip install -q -r evals/requirements.txt
-	python evals/runner.py
+	pip3 install -q -r evals/requirements.txt
+	python3 evals/runner.py
 
 ## Show container status and open the UI URL
 demo:

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from sqlalchemy import text
 from core.db import SessionLocal
 
