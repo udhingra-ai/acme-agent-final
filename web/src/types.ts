@@ -1,5 +1,21 @@
 export type Role = 'sales_user' | 'support_user' | 'admin'
 export type View = 'assistant' | 'customers' | 'issues' | 'observability' | 'evals' | 'architecture'
+
+export interface Briefing {
+  id: number
+  customer_name: string
+  account_owner: string
+  health_status: string
+  open_issues: number
+  risk_level: string
+  risk_summary: string
+  recommended_action: string
+  urgency: string
+  source: 'health_sweep' | 'escalation_cdc' | 'churn_signal'
+  trigger_issue_id?: number
+  acknowledged: boolean
+  created_at: string
+}
 export type HealthStatus = 'green' | 'amber' | 'red'
 export type Severity = 'critical' | 'high' | 'medium' | 'low'
 export type RiskLevel = 'Low' | 'Medium' | 'High' | 'Critical'
@@ -59,7 +75,7 @@ export interface SkillOutput {
   executive_summary: string
   customer_health: string
   risk_level: RiskLevel
-  risk_rationale: string
+  rationale: string
   urgency: string
   recommended_next_action: string
   owner_suggestion: string
@@ -70,6 +86,7 @@ export interface SkillOutput {
     history_events: number
     sources: string[]
   }
+  selected_primary_issue?: Record<string, unknown>
 }
 
 export interface QueryStep {
@@ -93,6 +110,23 @@ export interface QueryResponse {
   plan: QueryPlan
   steps: QueryStep[]
   session_context: { history: unknown[] }
+  trace_id?: string
+}
+
+export type AgentStage = 'planning' | 'tools' | 'risk_action' | 'response' | null
+
+export interface ReactThought {
+  thought: string
+  next_tool: string
+  iteration: number
+}
+
+export interface Alert {
+  type: 'critical' | 'warning'
+  customer_name: string
+  segment: string
+  open_issues: number
+  message: string
 }
 
 export interface ChatMessage {
@@ -102,6 +136,15 @@ export interface ChatMessage {
   response?: QueryResponse
   loading?: boolean
   traceOpen?: boolean
+  // Streaming state (populated during loading, cleared on done)
+  streamingAnswer?: string
+  partialSteps?: QueryStep[]
+  partialPlan?: QueryPlan
+  currentStage?: AgentStage
+  // ReAct loop thoughts shown during streaming
+  reactThoughts?: ReactThought[]
+  // Disambiguation
+  disambiguation?: { matches: string[]; original_query: string }
 }
 
 export interface TraceRecord {

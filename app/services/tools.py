@@ -6,7 +6,8 @@ from repositories.customer_repo import (
     get_customer_by_name, resolve_customer_name, get_allowed_customer_names,
 )
 from repositories.issue_repo import (
-    get_open_issues_for_customer, get_issue_history, create_next_action, get_issue_by_id,
+    get_open_issues_for_customer, get_issue_history, create_next_action,
+    get_issue_by_id, update_issue_status,
 )
 from services.memory_service import get_cached_customer_profile, cache_customer_profile
 from observability.logging_utils import log_event, timed
@@ -143,6 +144,20 @@ def tool_semantic_search_issues(query: str, user_ctx: dict = None):
     return results
 
 
+@timed
+def tool_search_customers(query: str):
+    """
+    Fuzzy-search customers by partial/abbreviated name.
+    Returns matches so the LLM can pick the right one or present options.
+    Does NOT require an exact name — 'nexi' → 'Nexus Payments Ltd'.
+    """
+    from repositories.customer_repo import find_customer_matches
+    matches, exact = find_customer_matches(query)
+    log_event('tool_call', {'tool': 'search_customers', 'query': query,
+                            'match_count': len(matches), 'exact': exact})
+    return {'matches': matches, 'count': len(matches), 'exact': exact}
+
+
 def _build_action_text(issue: dict) -> str:
     """Generate a contextual next-action recommendation from issue attributes."""
     severity = (issue.get('severity') or 'high').lower()
@@ -173,3 +188,12 @@ def tool_recommend_next_action(issue_id: int, username: str):
     log_event('tool_call', {'tool': 'recommend_next_action', 'via': 'direct_db',
                             'issue_id': issue_id, 'owner': username})
     return create_next_action(issue_id, action_text, username)
+
+
+@timed
+def tool_update_issue_status(issue_id: int, new_status: str, username: str):
+    """Mark an issue as in_progress, waiting, or resolved. Adds an audit note."""
+    result = update_issue_status(issue_id, new_status, username)
+    log_event('tool_call', {'tool': 'update_issue_status', 'via': 'direct_db',
+                            'issue_id': issue_id, 'new_status': new_status, 'by': username})
+    return result

@@ -76,7 +76,7 @@ flowchart TD
 
 ---
 
-## LangGraph ReAct pipeline + bounded 3-agent workflow
+## LangGraph ReAct pipeline (primary) + sync agent workflow (secondary)
 
 The orchestrator uses a LangGraph `StateGraph` with a 5-node bounded ReAct loop:
 

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def customer_escalation_summary(customer_name: str, profile: dict, issues: list, history: list):
@@ -58,7 +58,7 @@ def customer_escalation_summary(customer_name: str, profile: dict, issues: list,
             if last_ts:
                 last_dt = last_ts if isinstance(last_ts, datetime) \
                     else datetime.fromisoformat(str(last_ts)[:19])
-                days_stale = (datetime.utcnow() - last_dt.replace(tzinfo=None)).days
+                days_stale = (datetime.now(timezone.utc) - last_dt.replace(tzinfo=timezone.utc)).days
                 if days_stale >= 7:
                     stale = True
                     risk_int = max(risk_int, 2)

@@ -41,6 +41,11 @@ def _decode_token(token: str) -> dict:
     if not key:
         raise HTTPException(status_code=401, detail='Unable to find signing key')
 
+    # verify_aud=False: Keycloak does not emit an `aud` claim by default for realm tokens.
+    # We validate the authorized party (azp) below instead, which is equivalent
+    # and avoids requiring a client-specific audience mapper in the realm config.
+    # In a production setup with a dedicated audience mapper, set verify_aud=True
+    # and pass audience=KEYCLOAK_CLIENT_ID.
     claims = jwt.decode(
         token, key,
         algorithms=['RS256'],
@@ -51,8 +56,10 @@ def _decode_token(token: str) -> dict:
     # Validate authorized party — Keycloak doesn't emit an aud claim by default,
     # but azp (authorized party) identifies which client requested the token.
     # Reject tokens issued for a different client on the same realm.
+    # We require azp when KEYCLOAK_CLIENT_ID is configured so tokens without
+    # an azp claim (e.g. service accounts with no client binding) are also rejected.
     azp = claims.get('azp', '')
-    if azp and azp != KEYCLOAK_CLIENT_ID:
+    if KEYCLOAK_CLIENT_ID and azp != KEYCLOAK_CLIENT_ID:
         raise HTTPException(status_code=401, detail='Token not issued for this client')
 
     return claims

@@ -6,10 +6,23 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from auth.security import get_user_context
-from agents.orchestrator import run_agent, run_agent_stream
-from agents.graph_orchestrator import run_agent_stream as graph_stream
+from agents.orchestrator import run_agent, run_agent_stream   # /query (non-streaming)
+from agents.graph_orchestrator import run_agent_stream as graph_stream  # /query/stream (LangGraph ReAct)
 from services.keycloak_client import get_password_token
 from services.rate_limiter import limiter
+
+# Orchestrator routing:
+#   POST /query         → agents/orchestrator.py (run_agent)
+#                         Synchronous; deterministic planner + rule fallback; returns full JSON.
+#                         Used by: eval harness, API clients that don't support SSE.
+#
+#   POST /query/stream  → agents/graph_orchestrator.py (graph_stream / run_agent_stream)
+#                         Streaming SSE; LangGraph 5-node ReAct loop; progressive token output.
+#                         Used by: web UI, SSE-capable clients.
+#
+# Both paths share the same tool layer (services/tools.py), RBAC (auth/security.py),
+# and RLS enforcement. The LangGraph path is the production primary; the sync path
+# is kept for compatibility and eval coverage.
 
 _YAML_PATHS = [
     '/evals/test_queries.yaml',
@@ -45,7 +58,8 @@ def query_stream(request: Request, body: QueryRequest,
 @limiter.limit('30/minute')
 def query_agent_limited(request: Request, body: QueryRequest,
                         user_ctx: dict = Depends(get_user_context)):
-    result = run_agent(body.user_query, body.session_id, user_ctx)
+    trace_id = getattr(request.state, 'trace_id', '')
+    result = run_agent(body.user_query, body.session_id, user_ctx, trace_id=trace_id)
     return {'user': user_ctx, **result}
 
 @router.post('/auth/token')
@@ -120,13 +134,19 @@ def get_briefings_route(user_ctx: dict = Depends(get_user_context)):
 
 @router.post('/briefings/{briefing_id}/acknowledge')
 def acknowledge_briefing_route(briefing_id: int, user_ctx: dict = Depends(get_user_context)):
-    from repositories.briefing_repo import acknowledge_briefing
+    from repositories.briefing_repo import acknowledge_briefing, get_briefing_by_id
+    from services.alert_service import clear_alert
     roles = user_ctx.get('roles', [])
     # Non-admin users can only acknowledge briefings they own
     owner = None if 'admin' in roles else user_ctx.get('username')
+    # Fetch before acknowledging so we can clear the alert dedup key,
+    # allowing the same customer to trigger a new alert after the user dismisses.
+    briefing = get_briefing_by_id(briefing_id)
     ok = acknowledge_briefing(briefing_id, account_owner=owner)
     if not ok:
         raise HTTPException(status_code=404, detail='Briefing not found')
+    if briefing:
+        clear_alert(briefing['customer_name'], briefing.get('source', 'health_sweep'))
     return {'acknowledged': True}
 
 
@@ -185,6 +205,42 @@ def cache_stats_route(user_ctx: dict = Depends(get_user_context)):
             FROM query_cache
         ''')).mappings().first()
     return dict(row) if row else {}
+
+
+@router.get('/audit')
+def get_audit_log(limit: int = 50, username: str = '',
+                  user_ctx: dict = Depends(get_user_context)):
+    """Return the durable write audit log (admin only). Queryable by username."""
+    from auth.security import require_role
+    require_role(user_ctx, ['admin'])
+    from sqlalchemy import text
+    from core.db import SessionLocal
+    params: dict = {'limit': min(limit, 200)}
+    where = 'WHERE username = :username' if username else ''
+    if username:
+        params['username'] = username
+    with SessionLocal() as db:
+        rows = db.execute(text(f'''
+            SELECT trace_id, tool, label, username, roles, args, ts
+            FROM write_audit {where}
+            ORDER BY ts DESC LIMIT :limit
+        '''), params).mappings().all()
+    return {'entries': [dict(r) for r in rows], 'total': len(rows)}
+
+
+@router.get('/trace/{trace_id}')
+def get_trace_route(trace_id: str, user_ctx: dict = Depends(get_user_context)):
+    """Return LangGraph node steps persisted to Redis for a request trace (admin only)."""
+    from auth.security import require_role
+    require_role(user_ctx, ['admin', 'support_user'])
+    try:
+        from core.redis_client import r
+        raw = r.lrange(f'trace:{trace_id}:steps', 0, -1)
+        import json as _json
+        steps = [_json.loads(s) for s in raw]
+    except Exception:
+        steps = []
+    return {'trace_id': trace_id, 'steps': steps, 'count': len(steps)}
 
 
 @router.post('/briefings/sweep')

@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import { fetchCustomers } from '../api/customers'
 import { healthLabel, healthMeta, healthScore } from '../utils'
+import { useNav } from '../store/NavContext'
 import type { Customer } from '../types'
 
 export default function Customers() {
+  const { navigate } = useNav()
   const [customers, setCustomers] = useState<Customer[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -56,11 +58,11 @@ export default function Customers() {
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 16 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-.01em' }}>{c.name}</span>
+                      <button onClick={() => navigate('issues', undefined, c.name)} style={{ all: 'unset', cursor: 'pointer', fontSize: 22, fontWeight: 800, letterSpacing: '-.01em', color: '#23232B', textDecoration: 'underline', textDecorationStyle: 'dotted', textUnderlineOffset: '3px' }}>{c.name}</button>
                       <span style={{ fontSize: 12, fontWeight: 700, color: '#6B6B78', background: '#F1F1F4', border: '1px solid #E6E6EC', padding: '2px 8px', borderRadius: 5 }}>{c.segment}</span>
                     </div>
                   </div>
-                  <span style={{ fontSize: 13.5, fontWeight: 700, color: hm.fg, background: hm.bg, padding: '5px 12px', borderRadius: 20, flexShrink: 0, marginTop: 2 }}>{hl}</span>
+                  <button onClick={() => navigate('issues', undefined, c.name)} style={{ all: 'unset', cursor: 'pointer', fontSize: 13.5, fontWeight: 700, color: hm.fg, background: hm.bg, padding: '5px 12px', borderRadius: 20, flexShrink: 0, marginTop: 2 }}>{hl}</button>
                 </div>
 
                 {/* Health score bar */}
@@ -77,7 +79,7 @@ export default function Customers() {
                 {/* Footer row */}
                 <div style={{ borderTop: '1px solid #EDEDF1', paddingTop: 14, display: 'flex', alignItems: 'center' }}>
                   <span style={{ fontSize: 15.5, color: '#8C8C99' }}>Owner <span style={{ color: '#3A3A44', fontWeight: 600 }}>{c.account_owner}</span></span>
-                  <span style={{ marginLeft: 'auto', fontSize: 13.5, fontWeight: 700, color: (c.open_issues ?? 0) > 0 ? '#B4232A' : '#1F7A4D', background: (c.open_issues ?? 0) > 0 ? '#FBEAEA' : '#E7F4EC', border: `1px solid ${(c.open_issues ?? 0) > 0 ? '#FBCECE' : '#BBE5D0'}`, padding: '4px 11px', borderRadius: 20 }}>{c.open_issues ?? 0} open</span>
+                  <button onClick={() => navigate('issues', undefined, c.name)} style={{ all: 'unset', cursor: 'pointer', marginLeft: 'auto', fontSize: 13.5, fontWeight: 700, color: (c.open_issues ?? 0) > 0 ? '#B4232A' : '#1F7A4D', background: (c.open_issues ?? 0) > 0 ? '#FBEAEA' : '#E7F4EC', border: `1px solid ${(c.open_issues ?? 0) > 0 ? '#FBCECE' : '#BBE5D0'}`, padding: '4px 11px', borderRadius: 20 }}>{c.open_issues ?? 0} open</button>
                 </div>
 
               </div>

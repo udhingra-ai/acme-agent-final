@@ -5,12 +5,14 @@ from typing import Any, Dict, List
 from core.config import OPENAI_API_KEY, OPENAI_MODEL
 
 TOOL_DESCRIPTIONS = {
-    'list_all_open_issues':   'List issues across ALL customers. Args: severity (optional: critical/high/medium/low), statuses (optional list: open/in_progress/resolved/waiting — defaults to [open, in_progress]). USE THIS whenever no specific customer is named.',
+    'search_customers':       'Find customers by partial, abbreviated, or misspelled name using fuzzy matching. Args: query (string — the name fragment, e.g. "nexi", "pinnacle", "apex"). Use this FIRST whenever the user seems to name a company but the customer_name in state is empty.',
+    'list_all_open_issues':   'List issues across ALL customers. Args: severity (optional: critical/high/medium/low), statuses (optional list: open/in_progress/resolved/waiting — defaults to [open, in_progress]). USE THIS only when no specific customer is named AND the query is not a name lookup.',
     'get_customer_profile':   'Get the profile for ONE named customer. Args: customer_name (string).',
     'get_open_issues':        'Get all open issues for ONE named customer. Args: customer_name (string).',
     'get_issue_history':      'Get update history for a specific issue. Args: issue_id (int). Requires get_open_issues first.',
     'recommend_next_action':  'Create a next action for a specific issue. Args: issue_id (int). Requires get_open_issues first.',
     'semantic_search_issues': 'Find issues by concept/phrase using semantic vector similarity (RAG). Args: query (string). Use for conceptual queries like "issues similar to rate limiting problems" or "find API timeout issues" when no specific customer is named.',
+    'update_issue_status':    'Update the status of a specific issue. Args: issue_id (int), new_status (open/in_progress/waiting/resolved). Requires get_open_issues first. Support/admin only.',
 }
 
 SYSTEM_PROMPT = """Core planning engine for an enterprise operations assistant (Atlas).

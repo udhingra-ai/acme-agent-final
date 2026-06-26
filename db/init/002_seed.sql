@@ -6,18 +6,20 @@ TRUNCATE next_actions, issue_updates, issues, customers RESTART IDENTITY CASCADE
 
 -- ──────────────────────────────────────────────────────────────────────────
 -- CUSTOMERS  (3 red · 4 amber · 3 green)
+-- alice.sales owns 7 (the red/amber book — used in main eval cases)
+-- james.whitfield owns 3 green customers — proves RLS filters by account_owner
 -- ──────────────────────────────────────────────────────────────────────────
 INSERT INTO customers (name, segment, account_owner, health_status) VALUES
-('Pinnacle Bancorp',           'Enterprise',  'alice.sales',     'red'),
-('Apex Clearing Services',     'Mid-Market',  'alice.sales',     'red'),
-('Nexus Payments Ltd',         'Mid-Market',  'marcus.chen',     'red'),
-('Meridian Capital Group',     'Enterprise',  'james.whitfield', 'amber'),
-('Fortuna Wealth Management',  'Mid-Market',  'divya.patel',     'amber'),
-('Sterling Asset Management',  'Enterprise',  'tom.blackwell',   'amber'),
-('Atlas Merchant Bank',        'Enterprise',  'emma.rodriguez',  'amber'),
-('Sovereign Life & Annuities', 'Enterprise',  'alice.sales',     'green'),
-('Harborview Credit Union',    'SME',         'alice.sales',     'green'),
-('Dominion Insurance Group',   'Enterprise',  'james.whitfield', 'green');
+('Pinnacle Bancorp',           'Enterprise',  'alice.sales',      'red'),
+('Apex Clearing Services',     'Mid-Market',  'alice.sales',      'red'),
+('Nexus Payments Ltd',         'Mid-Market',  'alice.sales',      'red'),
+('Meridian Capital Group',     'Enterprise',  'alice.sales',      'amber'),
+('Fortuna Wealth Management',  'Mid-Market',  'alice.sales',      'amber'),
+('Sterling Asset Management',  'Enterprise',  'alice.sales',      'amber'),
+('Atlas Merchant Bank',        'Enterprise',  'alice.sales',      'amber'),
+('Sovereign Life & Annuities', 'Enterprise',  'james.whitfield',  'green'),
+('Harborview Credit Union',    'SME',         'james.whitfield',  'green'),
+('Dominion Insurance Group',   'Enterprise',  'james.whitfield',  'green');
 
 -- ──────────────────────────────────────────────────────────────────────────
 -- ISSUES
@@ -394,6 +396,91 @@ SELECT i.id,
   'Complete enhanced KYC refresh for all 22 High Risk corporate accounts within 30 days; mobilise additional KYC analyst resource to address remaining 158 Standard Risk accounts within the 60-day MLRO-approved programme',
   'compliance.lead', CURRENT_DATE + INTERVAL '30 days', 'approved'
 FROM issues i WHERE i.title = 'KYC periodic review overdue: 180 corporate accounts beyond 12-month refresh cycle';
+
+-- ──────────────────────────────────────────────────────────────────────────
+-- GREEN CUSTOMERS — resolved & waiting issues to populate filter tabs
+-- ──────────────────────────────────────────────────────────────────────────
+
+-- Sovereign Life & Annuities (GREEN) ─────────────────────────────────────
+INSERT INTO issues (customer_id, title, severity, status)
+SELECT id, 'Solvency II SCR model validation: third-party actuarial sign-off obtained', 'high', 'resolved'
+FROM customers WHERE name = 'Sovereign Life & Annuities';
+
+INSERT INTO issues (customer_id, title, severity, status)
+SELECT id, 'Policy admin migration to new core platform: UAT sign-off pending client review', 'medium', 'waiting'
+FROM customers WHERE name = 'Sovereign Life & Annuities';
+
+INSERT INTO issue_updates (issue_id, update_text, updated_by)
+SELECT i.id,
+  'Solvency II internal model SCR calculation fully validated by Willis Towers Watson. PRA pre-application submission accepted. Issue closed — no further action required.',
+  'compliance.lead'
+FROM issues i WHERE i.title = 'Solvency II SCR model validation: third-party actuarial sign-off obtained';
+
+INSERT INTO issue_updates (issue_id, update_text, updated_by)
+SELECT i.id,
+  'UAT completed successfully across all 14 test scenarios. Awaiting Sovereign Life sign-off on the UAT evidence pack before production cutover can be scheduled. Client confirmed review window of 5-7 business days.',
+  'ops.lead'
+FROM issues i WHERE i.title = 'Policy admin migration to new core platform: UAT sign-off pending client review';
+
+INSERT INTO next_actions (issue_id, action_text, owner, due_date, status)
+SELECT i.id,
+  'Chase client for UAT sign-off; schedule production cutover call for following week once approval received',
+  'alice.sales', CURRENT_DATE + INTERVAL '5 days', 'proposed'
+FROM issues i WHERE i.title = 'Policy admin migration to new core platform: UAT sign-off pending client review';
+
+-- Harborview Credit Union (GREEN) ─────────────────────────────────────────
+INSERT INTO issues (customer_id, title, severity, status)
+SELECT id, 'NCUA exam findings remediation: all 3 management letter items addressed and closed', 'high', 'resolved'
+FROM customers WHERE name = 'Harborview Credit Union';
+
+INSERT INTO issues (customer_id, title, severity, status)
+SELECT id, 'ACH origination limit increase request: awaiting Federal Reserve approval', 'medium', 'waiting'
+FROM customers WHERE name = 'Harborview Credit Union';
+
+INSERT INTO issue_updates (issue_id, update_text, updated_by)
+SELECT i.id,
+  'All three NCUA management letter items (BSA/AML programme gap, overdraft policy disclosure, IT contingency plan) fully remediated. Examiner confirmed acceptance in writing on 14 Jan. Issue closed.',
+  'compliance.lead'
+FROM issues i WHERE i.title = 'NCUA exam findings remediation: all 3 management letter items addressed and closed';
+
+INSERT INTO issue_updates (issue_id, update_text, updated_by)
+SELECT i.id,
+  'Application submitted to Federal Reserve Bank of San Francisco on 3 Jan for ACH origination limit increase from USD 2M to USD 5M per day. Typical review window 30-45 business days. No further action until decision received.',
+  'ops.manager'
+FROM issues i WHERE i.title = 'ACH origination limit increase request: awaiting Federal Reserve approval';
+
+INSERT INTO next_actions (issue_id, action_text, owner, due_date, status)
+SELECT i.id,
+  'Follow up with Federal Reserve relationship contact after 30 business days if no decision received; prepare interim ACH controls to accommodate member demand in the interim',
+  'alice.sales', CURRENT_DATE + INTERVAL '22 days', 'proposed'
+FROM issues i WHERE i.title = 'ACH origination limit increase request: awaiting Federal Reserve approval';
+
+-- Dominion Insurance Group (GREEN) ───────────────────────────────────────
+INSERT INTO issues (customer_id, title, severity, status)
+SELECT id, 'Lloyd''s syndicate reporting: Xchanging premium reconciliation discrepancy resolved', 'high', 'resolved'
+FROM customers WHERE name = 'Dominion Insurance Group';
+
+INSERT INTO issues (customer_id, title, severity, status)
+SELECT id, 'FCA Consumer Duty evidence framework: board paper drafted, awaiting board approval', 'medium', 'waiting'
+FROM customers WHERE name = 'Dominion Insurance Group';
+
+INSERT INTO issue_updates (issue_id, update_text, updated_by)
+SELECT i.id,
+  'GBP 140K premium reconciliation break on Syndicate 2623 traced to a duplicate bordereaux submission from a managing agent. Xchanging confirmed correction applied. Year-end bordereau reconciles to zero. Issue closed.',
+  'ops.lead'
+FROM issues i WHERE i.title = 'Lloyd''s syndicate reporting: Xchanging premium reconciliation discrepancy resolved';
+
+INSERT INTO issue_updates (issue_id, update_text, updated_by)
+SELECT i.id,
+  'Consumer Duty board paper drafted covering product governance, price and value assessments, and customer support outcomes. Compliance Director has approved content. Scheduled for board meeting on 28 Feb — awaiting chair confirmation.',
+  'compliance.lead'
+FROM issues i WHERE i.title = 'FCA Consumer Duty evidence framework: board paper drafted, awaiting board approval';
+
+INSERT INTO next_actions (issue_id, action_text, owner, due_date, status)
+SELECT i.id,
+  'Confirm board agenda slot with Dominion chair''s office; prepare executive summary briefing pack for non-executive directors ahead of the Consumer Duty paper',
+  'james.whitfield', CURRENT_DATE + INTERVAL '10 days', 'proposed'
+FROM issues i WHERE i.title = 'FCA Consumer Duty evidence framework: board paper drafted, awaiting board approval';
 
 -- ──────────────────────────────────────────────────────────────────────────
 -- USER ROLES

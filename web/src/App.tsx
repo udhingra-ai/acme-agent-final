@@ -1,6 +1,7 @@
-import { useState } from 'react'
 import { AuthProvider, useAuth } from './store/AuthContext'
 import { TraceProvider } from './store/TraceContext'
+import { NavProvider, useNav } from './store/NavContext'
+import type { View } from './types'
 import Login from './screens/Login'
 import Sidebar from './components/Sidebar'
 import TopBar from './components/TopBar'
@@ -10,11 +11,10 @@ import Issues from './screens/Issues'
 import Observability from './screens/Observability'
 import Evaluations from './screens/Evaluations'
 import Architecture from './screens/Architecture'
-import type { View } from './types'
 
 function Shell() {
   const { user } = useAuth()
-  const [view, setView] = useState<View>('assistant')
+  const { view, setView } = useNav()
 
   if (!user) return <Login />
 
@@ -49,7 +49,9 @@ export default function App() {
   return (
     <AuthProvider>
       <TraceProvider>
-        <Shell />
+        <NavProvider>
+          <Shell />
+        </NavProvider>
       </TraceProvider>
     </AuthProvider>
   )

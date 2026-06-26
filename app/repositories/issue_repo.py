@@ -148,6 +148,62 @@ def semantic_search_issues(query_embedding: list, limit: int = 5,
         return []
 
 
+_ALLOWED_STATUSES = {'open', 'in_progress', 'waiting', 'resolved'}
+
+
+def update_issue_status(issue_id: int, new_status: str, updated_by: str) -> dict | None:
+    """Set issue status. Returns updated row, or None if issue not found or status invalid."""
+    if new_status.lower() not in _ALLOWED_STATUSES:
+        return None
+    with SessionLocal() as db:
+        row = db.execute(
+            text('''
+                UPDATE issues SET status = :status
+                WHERE id = :id
+                RETURNING id, title, severity, status
+            '''),
+            {'id': issue_id, 'status': new_status.lower()}
+        ).mappings().first()
+        db.commit()
+        if row:
+            db.execute(
+                text('''
+                    INSERT INTO issue_updates (issue_id, update_text, updated_by)
+                    VALUES (:issue_id, :note, :by)
+                '''),
+                {'issue_id': issue_id,
+                 'note': f'Status changed to {new_status.lower()} by {updated_by}',
+                 'by': updated_by}
+            )
+            db.commit()
+        return dict(row) if row else None
+
+
+def get_open_issues_for_at_risk_customers() -> dict[str, list]:
+    """
+    Single query returning all open issues grouped by customer, for red/amber customers only.
+    Replaces N+1 pattern in health_sweep: 1 DB call instead of 1-per-customer.
+    Returns: {customer_name: [issue_dict, ...]}
+    """
+    sql = '''
+    SELECT i.id, i.title, i.severity, i.status,
+           c.name AS customer_name, c.health_status,
+           c.account_owner, c.segment, c.id AS customer_id
+    FROM issues i
+    JOIN customers c ON i.customer_id = c.id
+    WHERE LOWER(i.status) = 'open'
+      AND LOWER(c.health_status) IN ('red', 'amber')
+    ORDER BY c.name, i.id
+    '''
+    with SessionLocal() as db:
+        rows = db.execute(text(sql)).mappings().all()
+    grouped: dict[str, list] = {}
+    for r in rows:
+        cn = r['customer_name']
+        grouped.setdefault(cn, []).append(dict(r))
+    return grouped
+
+
 def create_next_action(issue_id: int, action_text: str, owner: str):
     sql = '''
     INSERT INTO next_actions (issue_id, action_text, owner, due_date, status)

@@ -126,6 +126,26 @@ def _run_migrations():
                 )
             '''))
 
+            # ── Durable write audit log ───────────────────────────────────────
+            # Redis holds a 24h trace; this table provides permanent audit compliance.
+            # Queried via GET /audit (admin only) for SOC2 / compliance review.
+            db.execute(text('''
+                CREATE TABLE IF NOT EXISTS write_audit (
+                  id        SERIAL PRIMARY KEY,
+                  trace_id  VARCHAR(64),
+                  tool      VARCHAR(100),
+                  label     VARCHAR(100),
+                  username  VARCHAR(255),
+                  roles     VARCHAR(255),
+                  args      TEXT,
+                  ts        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            '''))
+            db.execute(text(
+                'CREATE INDEX IF NOT EXISTS write_audit_user_ts_idx '
+                'ON write_audit (username, ts DESC)'
+            ))
+
             # ── CDC triggers — real-time NOTIFY on issue changes ──────────────
             db.execute(text('''
                 CREATE OR REPLACE FUNCTION notify_issue_change() RETURNS trigger AS $$
@@ -185,8 +205,9 @@ def _run_hnsw_index():
                     'WITH (m = 16, ef_construction = 64)'
                 ))
                 db.commit()
-    except Exception:
-        pass
+    except Exception as exc:
+        from observability.logging_utils import log_event
+        log_event('startup_warn', {'action': 'hnsw_index', 'error': str(exc)[:200]})
 
 
 def _backfill():
@@ -195,8 +216,9 @@ def _backfill():
         from services.embedding_service import backfill_issue_embeddings
         backfill_issue_embeddings()
         _run_hnsw_index()
-    except Exception:
-        pass
+    except Exception as exc:
+        from observability.logging_utils import log_event
+        log_event('startup_warn', {'action': 'embedding_backfill', 'error': str(exc)[:200]})
 
 
 def _start_embedding_worker():

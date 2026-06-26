@@ -16,7 +16,7 @@ Open a second terminal for live logs: `docker compose logs -f app`
 
 Open `docs/architecture.md`. Walk through the diagram:
 
-> "The user authenticates against Keycloak to get a JWT. Every request to the FastAPI app is validated server-side against Keycloak's JWKS endpoint. The app then calls the LLM planner — or falls back to a rule-based planner if the API key is unavailable — to decide which tools to invoke. Tool execution goes through the orchestrator, which enforces RBAC before calling any write tool. Results are persisted in Redis as session history, and customer profiles are cached with a 15-minute TTL. The MCP server at port 8100 owns the canonical tool registry — tool definitions live there, separated from the execution layer."
+> "The user authenticates against Keycloak to get a JWT. Every request to the FastAPI app is validated server-side against Keycloak's JWKS endpoint. The primary query path is a LangGraph ReAct loop — a 5-node state machine that uses the LLM as a reasoning step, calling tools iteratively. The ReAct loop enforces RBAC in a dedicated gate node before any write tool runs. Independent tools like `get_customer_profile` and `get_open_issues` run in parallel via ThreadPoolExecutor. Results are persisted in Redis as session history, and customer profiles are cached with a 15-minute TTL. The MCP server at port 8100 owns the canonical tool registry."
 
 ---
 
@@ -137,9 +137,9 @@ In terminal:
 python evals/runner.py
 ```
 
-Show the table output with 10 test cases — tool_match, status_match, grounded, latency.
+Show the table output — tool_match, status_match, grounded, latency.
 
-> "Ten test cases covering happy-path reads, write operations, RBAC enforcement, an unknown customer, and a prompt injection attempt. The grounding check verifies that 200 responses contain real structured data from the database, not hallucinated text."
+> "16 test cases × 2 execution paths (sync and stream) = 32 tests. Covers happy-path reads, write operations, RBAC enforcement (T08), an unknown customer (T09), prompt injection (T10), semantic search (T15), admin role (T13, T16), and full 4-tool flows. The grounding check verifies that 200 responses are based on real tool calls, not hallucinated text. One tool-match miss is tolerated for LLM non-determinism on the stream path."
 
 ---
 
@@ -162,6 +162,9 @@ Show the table output with 10 test cases — tool_match, status_match, grounded,
 
 - **Why not route tool calls through MCP?** — `docs/architecture.md` MCP section
 - **What happens if Redis goes down?** — `append_session_event` would throw; in production add a try/except fallback to non-cached path
-- **How is prompt injection prevented?** — RBAC is server-side; LLM is not a security boundary
+- **How is prompt injection prevented?** — RBAC is server-side; LLM is not a security boundary; `prompt_guard.py` runs before any LLM call
 - **Why gpt-4.1-mini?** — Cost, speed, sufficient for structured JSON planning; upgrade to gpt-4o for production
 - **What would you add for production?** — TLS, Redis AUTH, token revocation, OpenTelemetry, rate limiting, input length validation
+- **Why LangGraph over a hand-rolled while loop?** — Explicit state machine, inspectable transitions, standard tracing hooks; see `docs/design-tradeoffs.md`
+- **Why not async SQLAlchemy?** — ReAct loop is sequential; LLM latency dominates at 500ms–2s; DB is 10ms. Async saves 15ms, costs a full rewrite. See `docs/design-tradeoffs.md`
+- **How does the autonomous agent work?** — Three modes: health sweep (every 15 min), CDC escalation (triggered by new issue notes), churn signal (nightly). Writes only to `briefings` table — never creates customer-visible actions without human acknowledgement. CDC listener is a single background thread; in production replace with Kafka/Debezium for durability across pod restarts.

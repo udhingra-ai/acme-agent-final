@@ -3,6 +3,7 @@ import uuid
 from fastapi import HTTPException
 from auth.security import require_role
 from services.tools_registry import TOOL_MAP
+from agents.graph_orchestrator import _WRITE_TOOL_REGISTRY  # single source of truth for write-tool roles
 from services.memory_service import append_session_event
 from services.answer_synthesizer import synthesize_answer, synthesize_answer_stream
 from agents.risk_action_agent import run_risk_action_agent, select_primary_issue
@@ -10,12 +11,18 @@ from agents.planner import build_plan
 from observability.logging_utils import log_event
 
 
-def run_agent(user_query: str, session_id: str, user_ctx: dict):
+def run_agent(user_query: str, session_id: str, user_ctx: dict, trace_id: str = ''):
     # Prompt injection guard — same check as the streaming path
     from services.prompt_guard import check_prompt
     check_prompt(user_query)
 
-    trace_id = str(uuid.uuid4())[:8]
+    # Reuse the trace_id threaded from TraceMiddleware (set in routes.py) so
+    # the X-Trace-Id response header, request_trace log, and agent logs all
+    # share one UUID per request instead of generating a second short UUID here.
+    if not trace_id:
+        trace_id = str(uuid.uuid4())[:8]
+    else:
+        trace_id = trace_id[:8]
 
     # ── Agent 1: Planning Agent ───────────────────────────────────────────
     plan = build_plan(user_query, user_ctx['roles'])
@@ -68,7 +75,7 @@ def run_agent(user_query: str, session_id: str, user_ctx: dict):
             steps.append({'tool': tool_name, 'args': {'issue_id': primary['id']}, 'output': issue_history})
 
         elif tool_name == 'recommend_next_action':
-            require_role(user_ctx, ['support_user', 'admin'])
+            require_role(user_ctx, _WRITE_TOOL_REGISTRY['recommend_next_action']['roles'])
             if not issues:
                 raise HTTPException(status_code=400, detail='No issue available for next action')
             primary = select_primary_issue(issues)
@@ -78,6 +85,18 @@ def run_agent(user_query: str, session_id: str, user_ctx: dict):
                 'args': {'issue_id': primary['id'], 'owner': user_ctx['username']},
                 'output': next_action,
             })
+
+        elif tool_name == 'update_issue_status':
+            require_role(user_ctx, _WRITE_TOOL_REGISTRY['update_issue_status']['roles'])
+            if not issues:
+                raise HTTPException(status_code=400, detail='No issue available to update')
+            args = planned_step.get('args') or {}
+            primary = select_primary_issue(issues)
+            new_status = args.get('new_status', 'in_progress')
+            result = TOOL_MAP[tool_name](primary['id'], new_status, user_ctx['username'])
+            steps.append({'tool': tool_name,
+                          'args': {'issue_id': primary['id'], 'new_status': new_status},
+                          'output': result})
 
         elif tool_name == 'semantic_search_issues':
             args = planned_step.get('args') or {}
@@ -255,7 +274,7 @@ def run_agent_stream(user_query: str, session_id: str, user_ctx: dict):
                     step = {'tool': tool_name, 'args': {'issue_id': primary['id']}, 'output': issue_history}
 
             elif tool_name == 'recommend_next_action':
-                require_role(user_ctx, ['support_user', 'admin'])
+                require_role(user_ctx, _WRITE_TOOL_REGISTRY['recommend_next_action']['roles'])
                 if not issues:
                     raise HTTPException(status_code=400, detail='No issue available for next action')
                 primary = select_primary_issue(issues)

@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react'
 import { fetchIssues, fetchIssueDetail } from '../api/issues'
 import { statusMeta, severityToPriority, prioMeta, issId, fmtDate } from '../utils'
 import { useAuth } from '../store/AuthContext'
+import { useNav } from '../store/NavContext'
 import type { Issue, IssueDetail } from '../types'
 
-const FILTERS = ['All', 'Open', 'In Progress', 'Resolved']
+const FILTERS = ['All', 'Open', 'In Progress', 'Waiting', 'Resolved']
 
 export default function Issues() {
   const { user } = useAuth()
@@ -16,6 +17,8 @@ export default function Issues() {
   const [updateDraft, setUpdateDraft] = useState('')
   const [actionDraft, setActionDraft] = useState('')
   const [toast, setToast] = useState('')
+
+  const { issueTarget, clearIssueTarget, customerTarget, clearCustomerTarget } = useNav()
 
   const canUpdate = user?.role === 'support_user' || user?.role === 'admin'
   const canCreate = user?.role === 'admin'
@@ -40,8 +43,22 @@ export default function Issues() {
     fetchIssueDetail(selId).then(setDetail)
   }, [selId])
 
-  const filtered = filter === 'All' ? issues : issues.filter(i => i.status.toLowerCase() === filter.toLowerCase())
-  const selIssue = issues.find(i => i.id === selId) ?? null
+  useEffect(() => {
+    if (issueTarget === null) return
+    setFilter('All')
+    setSelId(issueTarget)
+    clearIssueTarget()
+  }, [issueTarget])
+
+  useEffect(() => {
+    if (!customerTarget) return
+    setFilter('All')
+    // selId will auto-resolve to the first matching issue via filtered[0] fallback
+  }, [customerTarget])
+
+  const byStatus = filter === 'All' ? issues : issues.filter(i => i.status.toLowerCase() === filter.toLowerCase().replace(' ', '_'))
+  const filtered = customerTarget ? byStatus.filter(i => i.customer_name === customerTarget) : byStatus
+  const selIssue = filtered.find(i => i.id === selId) ?? filtered[0] ?? null
 
   if (loading) return <div style={{ padding: 40, color: '#9A9AA6' }}>Loading issues…</div>
 
@@ -50,6 +67,12 @@ export default function Issues() {
       <div style={{ display: 'flex', height: '100%' }}>
         {/* List panel */}
         <div style={{ width: 430, flexShrink: 0, borderRight: '1px solid #E6E6EC', background: '#fff', display: 'flex', flexDirection: 'column' }}>
+          {customerTarget && (
+            <div style={{ padding: '8px 16px', borderBottom: '1px solid #EDEDF1', display: 'flex', alignItems: 'center', gap: 8, background: '#EEF3FB' }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: '#2A5BC0', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{customerTarget}</span>
+              <button onClick={() => clearCustomerTarget()} style={{ all: 'unset', cursor: 'pointer', fontSize: 16, color: '#2A5BC0', lineHeight: 1, flexShrink: 0 }}>×</button>
+            </div>
+          )}
           <div style={{ padding: '13px 16px', borderBottom: '1px solid #EDEDF1', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {FILTERS.map(f => {
               const active = filter === f
@@ -61,6 +84,11 @@ export default function Issues() {
             })}
           </div>
           <div style={{ flex: 1, overflowY: 'auto' }}>
+            {filtered.length === 0 && (
+              <div style={{ padding: '40px 20px', textAlign: 'center', color: '#9A9AA6', fontSize: 14 }}>
+                No {filter === 'All' ? '' : filter.toLowerCase() + ' '}issues
+              </div>
+            )}
             {filtered.map(i => {
               const sm = statusMeta(i.status)
               const pm = prioMeta(i.severity)
@@ -71,7 +99,7 @@ export default function Issues() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13.5, fontWeight: 600, color: '#8C8C99' }}>{issId(i.id)}</span>
                     <span style={{ fontSize: 12.5, fontWeight: 700, color: pm.fg, background: pm.bg, padding: '2px 8px', borderRadius: 4, fontFamily: "'JetBrains Mono', monospace" }}>{severityToPriority(i.severity)}</span>
-                    <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 700, color: sm.fg, background: sm.bg, padding: '3px 10px', borderRadius: 20 }}>{i.status}</span>
+                    <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 700, color: sm.fg, background: sm.bg, padding: '3px 10px', borderRadius: 20 }}>{i.status.replace(/_/g, ' ')}</span>
                   </div>
                   <div style={{ fontSize: 17, fontWeight: 600, marginTop: 7, color: '#23232B', textAlign: 'left', lineHeight: 1.35 }}>{i.title}</div>
                   <div style={{ fontSize: 15, color: '#9A9AA6', marginTop: 4, textAlign: 'left' }}>{i.customer_name}</div>
@@ -120,7 +148,7 @@ export default function Issues() {
                 </div>
                 <div style={{ display: 'flex', gap: 7, marginBottom: 20 }}>
                   {['Open', 'In Progress', 'Waiting', 'Resolved'].map(s => {
-                    const isActive = selIssue.status.toLowerCase() === s.toLowerCase() || (s === 'In Progress' && selIssue.status === 'in_progress')
+                    const isActive = selIssue.status.toLowerCase() === s.toLowerCase().replace(' ', '_')
                     return (
                       <button key={s} disabled={!canUpdate} style={{ all: 'unset', cursor: canUpdate ? 'pointer' : 'default', fontSize: 15, fontWeight: 600, padding: '8px 17px', borderRadius: 7, border: `1px solid ${isActive ? '#23232B' : '#E6E6EC'}`, background: isActive ? '#23232B' : '#fff', color: isActive ? '#fff' : '#6B6B78', opacity: canUpdate ? 1 : 0.55 }}>{s}</button>
                     )

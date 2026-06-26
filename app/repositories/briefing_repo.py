@@ -65,6 +65,16 @@ def get_recent_briefings(limit: int = 20, account_owner: str = None) -> list:
         return [dict(r) for r in rows]
 
 
+def get_briefing_by_id(briefing_id: int) -> dict | None:
+    """Fetch a single briefing row by id (used to retrieve customer/source before acknowledge)."""
+    with SessionLocal() as db:
+        row = db.execute(
+            text('SELECT id, customer_name, source FROM briefings WHERE id = :id'),
+            {'id': briefing_id}
+        ).mappings().first()
+        return dict(row) if row else None
+
+
 def acknowledge_briefing(briefing_id: int, account_owner: str = None) -> bool:
     """
     Acknowledge a briefing. If account_owner is provided, only match rows

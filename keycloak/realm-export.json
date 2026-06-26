@@ -52,6 +52,17 @@
       "lastName": "Admin",
       "credentials": [{"type": "password", "value": "Password123!", "temporary": false}],
       "realmRoles": ["admin"]
+    },
+    {
+      "username": "james.whitfield",
+      "enabled": true,
+      "emailVerified": true,
+      "requiredActions": [],
+      "email": "james.whitfield@acme.local",
+      "firstName": "James",
+      "lastName": "Whitfield",
+      "credentials": [{"type": "password", "value": "Password123!", "temporary": false}],
+      "realmRoles": ["sales_user"]
     }
   ]
 }

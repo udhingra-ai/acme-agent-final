@@ -1,5 +1,7 @@
-import type { View } from '../types'
+import { useEffect, useState } from 'react'
+import type { View, Alert, Briefing } from '../types'
 import { useAuth } from '../store/AuthContext'
+import { apiFetch } from '../api/client'
 import { avatarMeta } from '../utils'
 
 const NAV: Array<{ key: View; label: string; icon: () => JSX.Element }> = [
@@ -29,13 +31,51 @@ const ACCESS_SUMMARY: Record<string, string> = {
   admin:        'Full access · incl. next actions',
 }
 
+const SOURCE_LABEL: Record<string, string> = {
+  health_sweep:   'sweep',
+  escalation_cdc: 'escalation',
+  churn_signal:   'churn',
+}
+const SOURCE_COLOR: Record<string, string> = {
+  health_sweep:   '#7C3AED',
+  escalation_cdc: '#B4232A',
+  churn_signal:   '#C2410C',
+}
+const RISK_COLOR: Record<string, string> = {
+  critical: '#B4232A', high: '#C2410C', medium: '#D97706', low: '#36B37E',
+}
+
 interface Props { view: View; setView: (v: View) => void }
 
 export default function Sidebar({ view, setView }: Props) {
   const { user } = useAuth()
+  const [alerts, setAlerts] = useState<Alert[]>([])
+  const [briefings, setBriefings] = useState<Briefing[]>([])
+
+  useEffect(() => {
+    const fetchAll = () => {
+      apiFetch('/alerts')
+        .then((r: unknown) => { const d = r as { alerts: Alert[] }; setAlerts(d.alerts ?? []) })
+        .catch(() => {})
+      apiFetch('/briefings')
+        .then((r: unknown) => { const d = r as { briefings: Briefing[] }; setBriefings(d.briefings ?? []) })
+        .catch(() => {})
+    }
+    fetchAll()
+    const id = setInterval(fetchAll, 60_000)
+    return () => clearInterval(id)
+  }, [])
+
+  function dismiss(id: number) {
+    apiFetch(`/briefings/${id}/acknowledge`, { method: 'POST' })
+      .then(() => setBriefings(prev => prev.filter(b => b.id !== id)))
+      .catch(() => {})
+  }
+
+  const unackedCount = briefings.length
 
   return (
-    <aside style={{ width: 248, flexShrink: 0, background: '#1C1C23', display: 'flex', flexDirection: 'column', padding: '20px 14px' }}>
+    <aside style={{ width: 248, flexShrink: 0, background: '#1C1C23', display: 'flex', flexDirection: 'column', padding: '20px 14px', overflowY: 'auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px 20px' }}>
         <div style={{ display: 'flex', gap: 2.5 }}>
           <span style={{ width: 9, height: 9, background: '#FFE600', display: 'block' }} />
@@ -49,6 +89,11 @@ export default function Sidebar({ view, setView }: Props) {
       <nav style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
         {NAV.map(({ key, label, icon: Icon }) => {
           const active = view === key
+          const criticalCount = key === 'customers' ? alerts.filter(a => a.type === 'critical').length : 0
+          const warnCount     = key === 'customers' ? alerts.filter(a => a.type === 'warning').length  : 0
+          const briefingBadge = key === 'assistant' ? unackedCount : 0
+          const badgeCount    = criticalCount || warnCount || briefingBadge
+          const badgeBg       = criticalCount ? '#B4232A' : warnCount ? '#C2410C' : '#7C3AED'
           return (
             <button key={key} onClick={() => setView(key)} style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, padding: '9px 11px', borderRadius: 9, background: active ? '#2A2A33' : 'transparent', position: 'relative' }}>
               <span style={{ position: 'absolute', left: -14, top: '50%', transform: 'translateY(-50%)', width: 3, height: 18, borderRadius: '0 3px 3px 0', background: active ? '#FFE600' : 'transparent' }} />
@@ -56,12 +101,89 @@ export default function Sidebar({ view, setView }: Props) {
                 <Icon />
               </span>
               <span style={{ fontSize: 14, fontWeight: 600, color: active ? '#fff' : '#9A9AA6' }}>{label}</span>
+              {badgeCount > 0 && (
+                <span title={briefingBadge > 0 ? `${briefingBadge} unread agent briefing${briefingBadge !== 1 ? 's' : ''}` : `${badgeCount} alert${badgeCount !== 1 ? 's' : ''}`} style={{ marginLeft: 'auto', minWidth: 18, height: 18, borderRadius: 9, background: badgeBg, color: '#fff', fontSize: 10, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px', fontFamily: "'JetBrains Mono', monospace" }}>
+                  {badgeCount}
+                </span>
+              )}
             </button>
           )
         })}
       </nav>
 
-      <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {/* Proactive alerts panel */}
+      {alerts.length > 0 && (
+        <div style={{ margin: '16px 0 0', background: '#23232B', borderRadius: 10, padding: '11px 13px' }}>
+          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9.5, fontWeight: 700, color: '#FFE600', letterSpacing: '.07em', textTransform: 'uppercase', marginBottom: 8 }}>
+            Proactive alerts
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {alerts.slice(0, 4).map((a, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 7 }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: a.type === 'critical' ? '#B4232A' : '#C2410C', flexShrink: 0, marginTop: 4 }} />
+                <div>
+                  <div style={{ fontSize: 11.5, fontWeight: 700, color: '#E8E8F0', lineHeight: 1.3 }}>{a.customer_name}</div>
+                  <div style={{ fontSize: 10.5, color: '#8A8A99', lineHeight: 1.3 }}>{a.message}</div>
+                </div>
+              </div>
+            ))}
+            {alerts.length > 4 && (
+              <div style={{ fontSize: 10.5, color: '#7A7A88', fontFamily: "'JetBrains Mono', monospace" }}>+{alerts.length - 4} more</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Autonomous briefings panel */}
+      {briefings.length > 0 && (
+        <div style={{ margin: '10px 0 0', background: '#23232B', borderRadius: 10, padding: '11px 13px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9.5, fontWeight: 700, color: '#A78BFA', letterSpacing: '.07em', textTransform: 'uppercase' }}>
+              Agent briefings
+            </span>
+            <span style={{ marginLeft: 'auto', fontSize: 9.5, color: '#7A7A88', fontFamily: "'JetBrains Mono', monospace" }}>
+              {briefings.length} unread
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {briefings.slice(0, 3).map(b => (
+              <div key={b.id} style={{ background: '#1C1C23', borderRadius: 8, padding: '8px 10px', position: 'relative' }}>
+                <button
+                  onClick={() => dismiss(b.id)}
+                  title="Dismiss"
+                  style={{ all: 'unset', cursor: 'pointer', position: 'absolute', top: 6, right: 8, fontSize: 12, color: '#555566', lineHeight: 1 }}
+                >✕</button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: '#fff', background: SOURCE_COLOR[b.source] ?? '#555', padding: '1px 5px', borderRadius: 3, letterSpacing: '.04em' }}>
+                    {SOURCE_LABEL[b.source] ?? b.source}
+                  </span>
+                  <span style={{ fontSize: 9, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: RISK_COLOR[b.risk_level?.toLowerCase()] ?? '#8A8A99', textTransform: 'uppercase', letterSpacing: '.05em' }}>
+                    {b.risk_level}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11.5, fontWeight: 700, color: '#E8E8F0', lineHeight: 1.3, marginBottom: 3, paddingRight: 14 }}>
+                  {b.customer_name}
+                </div>
+                <div style={{ fontSize: 10.5, color: '#8A8A99', lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                  {b.risk_summary}
+                </div>
+                {b.recommended_action && (
+                  <div style={{ marginTop: 4, fontSize: 10, color: '#A78BFA', lineHeight: 1.35, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                    → {b.recommended_action}
+                  </div>
+                )}
+              </div>
+            ))}
+            {briefings.length > 3 && (
+              <div style={{ fontSize: 10.5, color: '#7A7A88', fontFamily: "'JetBrains Mono', monospace", textAlign: 'center' }}>
+                +{briefings.length - 3} more briefings
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div style={{ marginTop: 'auto', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
 
         {/* Signed-in identity card */}
         {user && (() => {

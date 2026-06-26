@@ -36,10 +36,16 @@ MAX_ITERATIONS = 6
 
 # Write-gated tool registry — each entry carries the allowed roles and an audit label.
 # Any new tool that mutates data must be added here; the RBAC gate enforces it automatically.
+# To add a write tool: (1) implement in tools.py, (2) add to TOOL_MAP in tools_registry.py,
+# (3) add entry here. The startup assertion below validates all three are in sync.
 _WRITE_TOOL_REGISTRY: dict = {
     'recommend_next_action': {
         'roles': ['support_user', 'admin'],
         'audit_label': 'create_next_action',
+    },
+    'update_issue_status': {
+        'roles': ['support_user', 'admin'],
+        'audit_label': 'update_issue_status',
     },
 }
 _WRITE_TOOLS = set(_WRITE_TOOL_REGISTRY.keys())
@@ -68,8 +74,9 @@ class AgentState(TypedDict):
     next_action_result: Optional[dict]
     all_issues: List[dict]
     steps: List[dict]
-    next_tool: str                   # tool name or "done"
+    next_tool: str                   # tool name or "done" (rule fallback / compat)
     next_tool_args: dict
+    next_tools: List[dict]           # parallel tool list: [{"tool": ..., "args": {...}}] (LLM path)
     rbac_error: Optional[str]
     risk_output: Optional[dict]
     plan_queue: Optional[List[dict]] # rule-fallback: pre-computed steps to pop from (None = not yet built)
@@ -97,19 +104,44 @@ def _persist_trace_step(trace_id: str, node: str, delta: dict) -> None:
 
 
 def _audit_write(trace_id: str, tool: str, user_ctx: dict, args: dict) -> None:
-    """Append an immutable audit record for every write operation."""
+    """
+    Write an immutable audit record to two stores:
+      Redis  — fast trace lookup by trace_id; 24h TTL (debugging / recent audit)
+      PostgreSQL — permanent, durable audit trail (compliance / long-term review)
+    """
+    label = _WRITE_TOOL_REGISTRY.get(tool, {}).get('audit_label', tool)
+    username = user_ctx.get('username', '')
+    roles = user_ctx.get('roles', [])
+    safe_args = {k: str(v)[:100] for k, v in args.items()}
+
+    # Redis: fast by-trace lookup (24h)
     try:
         from core.redis_client import r
-        record = {
-            'tool': tool,
-            'label': _WRITE_TOOL_REGISTRY.get(tool, {}).get('audit_label', tool),
-            'user': user_ctx.get('username', ''),
-            'roles': user_ctx.get('roles', []),
-            'args': {k: str(v)[:100] for k, v in args.items()},
-            'ts': time.time(),
-        }
-        r.rpush(f'audit:writes:{trace_id}', json.dumps(record))
-        r.expire(f'audit:writes:{trace_id}', 86400)  # 24-hour audit retention
+        r.rpush(f'audit:writes:{trace_id}', json.dumps({
+            'tool': tool, 'label': label, 'user': username,
+            'roles': roles, 'args': safe_args, 'ts': time.time(),
+        }))
+        r.expire(f'audit:writes:{trace_id}', 86400)
+    except Exception:
+        pass
+
+    # PostgreSQL: permanent audit trail
+    try:
+        from sqlalchemy import text
+        from core.db import SessionLocal
+        with SessionLocal() as db:
+            db.execute(text('''
+                INSERT INTO write_audit (trace_id, tool, label, username, roles, args)
+                VALUES (:trace_id, :tool, :label, :username, :roles, :args)
+            '''), {
+                'trace_id': trace_id,
+                'tool':     tool,
+                'label':    label,
+                'username': username,
+                'roles':    ','.join(roles),
+                'args':     json.dumps(safe_args),
+            })
+            db.commit()
     except Exception:
         pass
 
@@ -238,7 +270,7 @@ def _think_llm(state: AgentState) -> dict:
     called_tools = [s.get('tool') for s in state.get('steps', []) if s.get('tool')]
     obs = _build_observation_summary(state.get('steps', []))
 
-    system = f"""You are an agentic operations assistant. Decide the NEXT single tool to call, or "done".
+    system = f"""You are an agentic operations assistant. Decide which tools to call next, or "done".
 
 Query: {state['query']}
 Customer name resolved: {state.get('customer_name', 'none')}
@@ -253,14 +285,35 @@ Available tools:
 {json.dumps({k: v for k, v in TOOL_DESCRIPTIONS.items()}, indent=2)}
 
 Rules:
-1. No named customer → use list_all_open_issues (never call get_customer_profile with empty name)
-2. Named customer → get_customer_profile first, then get_open_issues if issues asked, then get_issue_history if history/status/summary asked
-3. semantic_search_issues → use for conceptual queries like "find issues similar to X" or "issues mentioning rate limiting"
-4. recommend_next_action → only if user explicitly asks to suggest/create/recommend an action
+0. Partial or ambiguous company name → call search_customers FIRST (alone — its output determines next steps).
+   - 1 match → that is the customer; next iteration call get_customer_profile + get_open_issues in parallel
+   - 2+ matches → present options to user and return done
+   - 0 matches → tell user no match found and return done
+   Do NOT fall back to list_all_open_issues when the query refers to a specific entity.
+1. No customer in query → use list_all_open_issues (never call get_customer_profile with empty name)
+2. Named customer confirmed → get_customer_profile + get_open_issues in parallel, then get_issue_history if summary/status asked
+3. semantic_search_issues → use for conceptual queries like "find issues similar to X"
+4. recommend_next_action → call whenever the query contains "suggest", "recommend", "next action", or "what should I do". This is a write tool that records the action; it is distinct from the risk_assess node summary. Requires get_open_issues first to obtain an issue_id.
 5. Never repeat a tool already called this turn
-6. Return "done" when you have enough data to answer the query
+6. Return done when you have enough data to answer
 
-Return ONLY valid JSON: {{"thought": "<your reasoning>", "next_tool": "<tool_name or done>", "args": {{}}}}"""
+Parallel execution — include multiple tools when they are INDEPENDENT (neither needs the other's output):
+  PARALLEL:  get_customer_profile + get_open_issues  (both just need customer_name)
+  SEQUENTIAL: search_customers → get_customer_profile  (need resolved name first)
+  SEQUENTIAL: get_open_issues → get_issue_history      (need issue_id from issues)
+  SEQUENTIAL: get_open_issues → recommend_next_action  (need issue_id from issues)
+
+Examples:
+Q: "what is nexi doing" | customer=none | called=[] → {{"thought":"nexi sounds like a company, search first","next_tools":[{{"tool":"search_customers","args":{{"query":"nexi"}}}}]}}
+Q: "what is nexi doing" | customer=Nexus Payments Ltd | called=["search_customers"] obs=[{{"matches":["Nexus Payments Ltd"],"count":1}}] → {{"thought":"found Nexus, get profile and issues in parallel","next_tools":[{{"tool":"get_customer_profile","args":{{"customer_name":"Nexus Payments Ltd"}}}},{{"tool":"get_open_issues","args":{{"customer_name":"Nexus Payments Ltd"}}}}]}}
+Q: "summarise status for Pinnacle Bancorp" | customer=Pinnacle Bancorp | called=[] → {{"thought":"named customer — profile and issues in parallel","next_tools":[{{"tool":"get_customer_profile","args":{{"customer_name":"Pinnacle Bancorp"}}}},{{"tool":"get_open_issues","args":{{"customer_name":"Pinnacle Bancorp"}}}}]}}
+Q: "summarise status for Pinnacle Bancorp" | customer=Pinnacle Bancorp | called=["get_customer_profile","get_open_issues"] → {{"thought":"have issues, now fetch history","next_tools":[{{"tool":"get_issue_history","args":{{}}}}]}}
+Q: "list all critical issues" | customer=none | called=[] → {{"thought":"portfolio query","next_tools":[{{"tool":"list_all_open_issues","args":{{"severity":"critical"}}}}]}}
+Q: "summarise status for Pinnacle Bancorp" | customer=Pinnacle Bancorp | called=["get_customer_profile","get_open_issues","get_issue_history"] → {{"thought":"have all data needed","next_tools":[{{"tool":"done","args":{{}}}}]}}
+Q: "give me full summary for Nexus Payments Ltd and suggest a next action" | customer=Nexus Payments Ltd | called=["get_customer_profile","get_open_issues","get_issue_history"] obs=[issues present] → {{"thought":"query says suggest next action — must call recommend_next_action with first issue_id","next_tools":[{{"tool":"recommend_next_action","args":{{"issue_id":1}}}}]}}
+
+Return ONLY valid JSON: {{"thought": "<reasoning>", "next_tools": [{{"tool": "<name>", "args": {{}}}}]}}
+To finish: {{"thought": "...", "next_tools": [{{"tool": "done", "args": {{}}}}]}}"""
 
     try:
         resp = client.chat.completions.create(
@@ -271,17 +324,24 @@ Return ONLY valid JSON: {{"thought": "<your reasoning>", "next_tool": "<tool_nam
         )
         data = json.loads(resp.choices[0].message.content)
         thought = data.get('thought', '')
-        next_tool = data.get('next_tool', 'done')
-        args = data.get('args') or {}
 
-        # Safety: prevent tool repetition
-        if next_tool in called_tools:
-            next_tool = 'done'
-            thought += f' (skipped — {next_tool} already called)'
+        # Parse next_tools; support old single-tool format for robustness
+        next_tools = data.get('next_tools') or []
+        if not next_tools:
+            nt = data.get('next_tool', 'done')
+            next_tools = [{'tool': nt, 'args': data.get('args') or {}}]
+
+        # Safety: drop tools already called this turn
+        next_tools = [t for t in next_tools
+                      if t.get('tool') == 'done' or t.get('tool') not in called_tools]
+        if not next_tools:
+            next_tools = [{'tool': 'done', 'args': {}}]
+            thought += ' (all planned tools already called)'
 
         return {
-            'next_tool': next_tool,
-            'next_tool_args': args,
+            'next_tools': next_tools,
+            'next_tool': next_tools[0].get('tool', 'done'),  # compat for routing
+            'next_tool_args': next_tools[0].get('args', {}),
             'thoughts': state.get('thoughts', []) + [thought],
             'planner_mode': 'react_llm',
             'iteration': state.get('iteration', 0) + 1,
@@ -335,84 +395,145 @@ def _think_rule(state: AgentState) -> dict:
 
 
 def _rbac_gate(state: AgentState) -> dict:
-    """Enforce RBAC before write tools execute. Uses registry so new write tools are auto-gated."""
-    tool = state.get('next_tool', '')
-    if tool in _WRITE_TOOLS:
-        allowed_roles = _WRITE_TOOL_REGISTRY[tool]['roles']
-        roles = state['user_ctx'].get('roles', [])
-        if not any(r in allowed_roles for r in roles):
-            return {'rbac_error': f"Tool '{tool}' requires {allowed_roles}. Current roles: {roles}"}
+    """Enforce RBAC before write tools execute. Checks all tools in a parallel batch."""
+    tools = state.get('next_tools') or [{'tool': state.get('next_tool', ''), 'args': {}}]
+    roles = state['user_ctx'].get('roles', [])
+    for t in tools:
+        tool = t.get('tool', '')
+        if tool in _WRITE_TOOLS:
+            allowed_roles = _WRITE_TOOL_REGISTRY[tool]['roles']
+            if not any(r in allowed_roles for r in roles):
+                return {'rbac_error': f"Tool '{tool}' requires {allowed_roles}. Current roles: {roles}"}
     return {'rbac_error': None}
 
 
-def _execute(state: AgentState) -> dict:
-    """Execute the tool decided by the think node. Append result to steps."""
-    tool = state.get('next_tool', '')
-    args = state.get('next_tool_args') or {}
+def _run_single_tool(tool: str, args: dict, state: AgentState) -> dict:
+    """
+    Execute one tool against the current state snapshot.
+    Returns a partial update dict: always has 'step'; may include profile/issues/etc.
+    Called from _execute — safe to run in a ThreadPoolExecutor worker.
+    """
     customer_name = state.get('customer_name', '')
-
-    new_steps = list(state.get('steps', []))
-    new_profile = state.get('profile')
-    new_issues = list(state.get('issues', []))
-    new_history = list(state.get('issue_history', []))
-    new_next_action = state.get('next_action_result')
-    new_all_issues = list(state.get('all_issues', []))
-
     user_ctx = state['user_ctx']
+    updates: dict = {}
 
     try:
         if tool == 'list_all_open_issues':
             result = TOOL_MAP[tool](severity=args.get('severity'),
                                     statuses=args.get('statuses'),
                                     user_ctx=user_ctx)
-            new_all_issues = result
-            new_steps.append({'tool': tool, 'args': args, 'output': result})
+            updates['all_issues'] = result
+            updates['step'] = {'tool': tool, 'args': args, 'output': result}
 
         elif tool == 'get_customer_profile':
             result = TOOL_MAP[tool](customer_name)
-            new_profile = result
-            new_steps.append({'tool': tool, 'args': {'customer_name': customer_name}, 'output': result})
+            updates['profile'] = result
+            updates['step'] = {'tool': tool, 'args': {'customer_name': customer_name}, 'output': result}
 
         elif tool == 'get_open_issues':
             result = TOOL_MAP[tool](customer_name, user_ctx=user_ctx)
-            new_issues = result
-            new_steps.append({'tool': tool, 'args': {'customer_name': customer_name}, 'output': result})
+            updates['issues'] = result
+            updates['step'] = {'tool': tool, 'args': {'customer_name': customer_name}, 'output': result}
 
         elif tool == 'get_issue_history':
-            issues_now = new_issues or state.get('issues', [])
+            issues_now = state.get('issues', [])
             if issues_now:
                 primary = select_primary_issue(issues_now)
                 result = TOOL_MAP[tool](primary['id'])
-                new_history = result
-                new_steps.append({'tool': tool, 'args': {'issue_id': primary['id']}, 'output': result})
+                updates['issue_history'] = result
+                updates['step'] = {'tool': tool, 'args': {'issue_id': primary['id']}, 'output': result}
 
         elif tool == 'recommend_next_action':
-            issues_now = new_issues or state.get('issues', [])
+            issues_now = state.get('issues', [])
             if issues_now:
                 primary = select_primary_issue(issues_now)
                 write_args = {'issue_id': primary['id'], 'owner': user_ctx['username']}
                 _audit_write(state['trace_id'], tool, user_ctx, write_args)
                 result = TOOL_MAP[tool](primary['id'], user_ctx['username'])
-                new_next_action = result
-                new_steps.append({
-                    'tool': tool,
-                    'args': write_args,
-                    'output': result,
-                })
+                updates['next_action_result'] = result
+                updates['step'] = {'tool': tool, 'args': write_args, 'output': result}
+
+        elif tool == 'update_issue_status':
+            issues_now = state.get('issues', [])
+            if issues_now:
+                primary = select_primary_issue(issues_now)
+                new_status = args.get('new_status', 'in_progress')
+                write_args = {'issue_id': primary['id'], 'new_status': new_status,
+                              'username': user_ctx['username']}
+                _audit_write(state['trace_id'], tool, user_ctx, write_args)
+                result = TOOL_MAP[tool](primary['id'], new_status, user_ctx['username'])
+                updates['step'] = {'tool': tool, 'args': write_args, 'output': result}
 
         elif tool == 'semantic_search_issues':
             result = TOOL_MAP[tool](args.get('query', state['query']), user_ctx=user_ctx)
-            new_steps.append({'tool': tool, 'args': args, 'output': result})
+            updates['step'] = {'tool': tool, 'args': args, 'output': result}
+
+        elif tool == 'search_customers':
+            result = TOOL_MAP[tool](args.get('query', ''))
+            updates['step'] = {'tool': tool, 'args': args, 'output': result}
+            if result.get('count') == 1:
+                updates['customer_name'] = result['matches'][0]
 
     except Exception as exc:
-        new_steps.append({'tool': tool, 'args': args, 'output': {'error': str(exc)}})
+        updates['step'] = {'tool': tool, 'args': args, 'output': {'error': str(exc)}}
 
-    log_event('tool_call', {
-        'tool': tool,
-        'trace_id': state['trace_id'],
-        'iteration': state.get('iteration', 0),
-        'via': 'graph_orchestrator',
-    })
+    return updates
+
+
+def _execute(state: AgentState) -> dict:
+    """
+    Execute one or more tools decided by the think node.
+    Independent tools run in parallel via ThreadPoolExecutor.
+    Sequential tools (e.g. get_issue_history after get_open_issues) are handled
+    by the LLM submitting them in separate think iterations.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    # Resolve tool list: LLM path uses next_tools, rule fallback uses next_tool
+    tools = state.get('next_tools') or []
+    if not tools:
+        nt = state.get('next_tool', '')
+        if nt and nt != 'done':
+            tools = [{'tool': nt, 'args': state.get('next_tool_args') or {}}]
+    tools = [t for t in tools if t.get('tool') and t['tool'] != 'done']
+
+    if not tools:
+        return {}
+
+    # Execute — parallel when >1 independent tool, sequential otherwise
+    if len(tools) == 1:
+        results = [_run_single_tool(tools[0]['tool'], tools[0].get('args') or {}, state)]
+    else:
+        with ThreadPoolExecutor(max_workers=len(tools)) as executor:
+            futures = [executor.submit(_run_single_tool, t['tool'], t.get('args') or {}, state)
+                       for t in tools]
+            results = [f.result() for f in futures]
+
+    # Merge all results into state update
+    new_steps = list(state.get('steps', []))
+    new_profile = state.get('profile')
+    new_issues = list(state.get('issues', []))
+    new_history = list(state.get('issue_history', []))
+    new_next_action = state.get('next_action_result')
+    new_all_issues = list(state.get('all_issues', []))
+    customer_name = state.get('customer_name', '')
+
+    for r in results:
+        if r.get('step'):
+            new_steps.append(r['step'])
+            log_event('tool_call', {
+                'tool': r['step']['tool'],
+                'trace_id': state['trace_id'],
+                'iteration': state.get('iteration', 0),
+                'via': 'graph_orchestrator',
+                'parallel': len(tools) > 1,
+            })
+        if 'profile' in r:         new_profile = r['profile']
+        if 'issues' in r:          new_issues = r['issues']
+        if 'issue_history' in r:   new_history = r['issue_history']
+        if 'next_action_result' in r: new_next_action = r['next_action_result']
+        if 'all_issues' in r:      new_all_issues = r['all_issues']
+        if 'customer_name' in r:   customer_name = r['customer_name']
 
     return {
         'steps': new_steps,
@@ -421,6 +542,7 @@ def _execute(state: AgentState) -> dict:
         'issue_history': new_history,
         'next_action_result': new_next_action,
         'all_issues': new_all_issues,
+        'customer_name': customer_name,
     }
 
 
@@ -450,8 +572,12 @@ def _after_think(state: AgentState) -> str:
         return 'end'
     if state.get('rbac_error'):
         return 'end'
-    nt = state.get('next_tool', 'done')
-    if nt == 'done' or state.get('iteration', 0) >= MAX_ITERATIONS:
+    next_tools = state.get('next_tools', [])
+    if next_tools:
+        is_done = all(t.get('tool') == 'done' for t in next_tools)
+    else:
+        is_done = state.get('next_tool', 'done') == 'done'
+    if is_done or state.get('iteration', 0) >= MAX_ITERATIONS:
         return 'risk_assess'
     return 'rbac_gate'
 
@@ -555,6 +681,7 @@ def run_agent_stream(user_query: str, session_id: str, user_ctx: dict,
         'steps': [],
         'next_tool': '',
         'next_tool_args': {},
+        'next_tools': [],
         'rbac_error': None,
         'risk_output': None,
         'plan_queue': None,
@@ -563,6 +690,7 @@ def run_agent_stream(user_query: str, session_id: str, user_ctx: dict,
     }
 
     accumulated = dict(initial)
+    accumulated_step_count = 0  # tracks how many steps have been streamed
 
     for chunk in _compiled.stream(initial, stream_mode='updates'):
         for node_name, delta in chunk.items():
@@ -577,9 +705,15 @@ def run_agent_stream(user_query: str, session_id: str, user_ctx: dict,
 
             elif node_name == 'think':
                 thoughts = delta.get('thoughts', [])
-                next_tool = delta.get('next_tool', '')
+                next_tools = delta.get('next_tools', [])
+                # Build display string: "get_customer_profile+get_open_issues" for parallel
+                if next_tools:
+                    active = [t.get('tool', '') for t in next_tools if t.get('tool') != 'done']
+                    nt_display = '+'.join(active) if active else 'done'
+                else:
+                    nt_display = delta.get('next_tool', 'done')
                 if thoughts:
-                    yield f'data: {json.dumps({"type": "react_thought", "thought": thoughts[-1], "next_tool": next_tool, "iteration": accumulated.get("iteration", 0)})}\n\n'
+                    yield f'data: {json.dumps({"type": "react_thought", "thought": thoughts[-1], "next_tool": nt_display, "iteration": accumulated.get("iteration", 0)})}\n\n'
 
             elif node_name == 'rbac_gate':
                 err = delta.get('rbac_error')
@@ -588,9 +722,11 @@ def run_agent_stream(user_query: str, session_id: str, user_ctx: dict,
                     return
 
             elif node_name == 'execute':
-                steps = delta.get('steps', [])
-                if steps:
-                    step = steps[-1]
+                # Emit ALL new steps added in this execute (handles parallel batches)
+                all_steps = accumulated.get('steps', [])
+                new_steps = all_steps[accumulated_step_count:]
+                accumulated_step_count = len(all_steps)
+                for step in new_steps:
                     if step.get('tool'):
                         yield f'data: {json.dumps({"type": "tool_result", "step": step}, default=str)}\n\n'
 

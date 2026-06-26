@@ -1,9 +1,10 @@
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState } from 'react'
 import { useAuth } from '../store/AuthContext'
 import { useTraces } from '../store/TraceContext'
-import { sendQuery } from '../api/chat'
+import { useNav } from '../store/NavContext'
+import { sendQueryStream } from '../api/chat'
 import { statusMeta, severityToPriority, prioMeta, riskMeta, issId, fmtMs, roleLabel } from '../utils'
-import type { ChatMessage, QueryResponse, QueryStep, SkillOutput } from '../types'
+import type { AgentStage, ChatMessage, QueryResponse, QueryStep, SkillOutput } from '../types'
 
 function uid() { return Math.random().toString(36).slice(2) }
 
@@ -43,8 +44,8 @@ const SUGGESTIONS = [
 ]
 
 function stepServer(tool: string): string {
-  if (tool === 'get_customer_profile' || tool === 'get_open_issues') return 'mcp·postgres'
-  if (tool === 'customer_escalation_summary') return 'skills'
+  if (tool === 'get_customer_profile' || tool === 'get_open_issues' || tool === 'get_issue_history' || tool === 'list_all_open_issues') return 'mcp·postgres'
+  if (tool === 'risk_action_agent') return 'risk·action'
   return 'acme-tools'
 }
 
@@ -73,13 +74,13 @@ function StepRow({ step, idx }: { step: QueryStep; idx: number }) {
       { cells: ['due', String(o.due_date ?? '')] },
       { cells: ['status', String(o.status ?? '')] },
     ]
-  } else if (step.skill === 'customer_escalation_summary' && output && typeof output === 'object') {
+  } else if (step.skill === 'risk_action_agent' && output && typeof output === 'object') {
     const o = output as Record<string, unknown>
     colHeads = ['field', 'value']
     rows = [
       { cells: ['risk_level', String(o.risk_level ?? '')] },
       { cells: ['urgency', String(o.urgency ?? '')] },
-      { cells: ['executive_summary', String(o.executive_summary ?? '')] },
+      { cells: ['primary_issue', String((o.selected_primary_issue as Record<string, unknown> | null)?.title ?? '—')] },
     ]
   }
 
@@ -88,7 +89,7 @@ function StepRow({ step, idx }: { step: QueryStep; idx: number }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#5BD89A', flexShrink: 0 }} />
         <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12.5, fontWeight: 600, color: '#EDEDF2' }}>{tool}</span>
-        <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 600, color: '#7A7A88', background: '#23232D', padding: '2px 7px', borderRadius: 5 }}>{step.skill ? 'skills' : stepServer(tool)}</span>
+        <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 600, color: '#7A7A88', background: '#23232D', padding: '2px 7px', borderRadius: 5 }}>{step.skill ? stepServer(step.skill) : stepServer(tool)}</span>
         <span style={{ marginLeft: 'auto', fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, color: '#8A8A99' }}>step {idx + 1}</span>
       </div>
       {step.args && (
@@ -112,10 +113,47 @@ function StepRow({ step, idx }: { step: QueryStep; idx: number }) {
   )
 }
 
+const STAGE_LABELS: Record<NonNullable<AgentStage>, string> = {
+  planning: 'Agent 1 — Planning…',
+  tools: 'ReAct loop — reasoning & tools…',
+  risk_action: 'Agent 2 — Risk assessment…',
+  response: 'Agent 3 — Writing response…',
+}
+
+function DisambiguationCard({ dis, onSelect }: {
+  dis: { matches: string[]; original_query: string }
+  onSelect: (name: string) => void
+}) {
+  return (
+    <div style={{ background: '#fff', border: '1px solid #E6E6EC', borderRadius: 15, padding: '18px 20px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+        <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, fontWeight: 700, color: '#9A6B00', background: '#FBF1DF', padding: '3px 8px', borderRadius: 5, letterSpacing: '.05em' }}>NAME RESOLUTION</span>
+        <span style={{ fontSize: 13.5, fontWeight: 600, color: '#3A3A44' }}>
+          {dis.matches.length === 1
+            ? `Did you mean ${dis.matches[0]}?`
+            : 'Multiple customers match — please confirm which one you meant:'}
+        </span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {dis.matches.map(name => (
+          <button key={name} onClick={() => onSelect(name)} style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, padding: '12px 15px', background: '#F8F8FB', border: '1px solid #E6E6EC', borderRadius: 11, transition: 'border-color .15s' }}
+            onMouseEnter={e => (e.currentTarget.style.borderColor = '#23232B')}
+            onMouseLeave={e => (e.currentTarget.style.borderColor = '#E6E6EC')}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#2A5BC0', flexShrink: 0 }} />
+            <span style={{ fontSize: 14.5, fontWeight: 700, color: '#23232B' }}>{name}</span>
+            <span style={{ marginLeft: 'auto', fontSize: 11, color: '#9A9AA6', fontFamily: "'JetBrains Mono', monospace" }}>{dis.matches.length === 1 ? 'yes, fetch →' : 'confirm →'}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function AgentTrace({ msg }: { msg: ChatMessage }) {
   const [open, setOpen] = useState(false)
-  const steps = msg.response?.steps ?? []
-  const plan = msg.response?.plan
+  const steps = msg.loading ? (msg.partialSteps ?? []) : (msg.response?.steps ?? [])
+  const plan  = msg.loading ? msg.partialPlan : msg.response?.plan
+  const thoughts = msg.reactThoughts ?? []
   const totalMs = steps.reduce((a, s) => {
     const o = s.output
     if (typeof o === 'object' && o !== null && 'id' in o) return a + 100
@@ -127,25 +165,47 @@ function AgentTrace({ msg }: { msg: ChatMessage }) {
       {!msg.loading && (
         <button onClick={() => setOpen(o => !o)} style={{ all: 'unset', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, color: '#6B6B78', fontFamily: "'JetBrains Mono', monospace" }}>
           <span style={{ fontSize: 9 }}>{open ? '▼' : '▶'}</span>
-          Agent trace · {steps.length} tool calls · {fmtMs(totalMs)}
+          Agent trace · {steps.filter(s => s.tool).length} tool calls · {thoughts.length > 0 ? `${thoughts.length} thoughts · ` : ''}{fmtMs(totalMs)}
         </button>
       )}
       {(open || msg.loading) && (
         <div style={{ marginTop: 10, background: '#1C1C23', borderRadius: 13, padding: '15px 17px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 11 }}>
             {msg.loading && <span style={{ width: 13, height: 13, border: '2px solid #3A3A45', borderTopColor: '#FFE600', borderRadius: '50%', display: 'inline-block', animation: 'spin .7s linear infinite' }} />}
-            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 700, color: '#A6A6B2', letterSpacing: '.05em', textTransform: 'uppercase' }}>{msg.loading ? 'Reasoning & tool calls' : 'Agent trace'}</span>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 700, color: '#A6A6B2', letterSpacing: '.05em', textTransform: 'uppercase' }}>
+              {msg.loading ? (STAGE_LABELS[msg.currentStage ?? 'planning'] ?? 'Reasoning & tool calls') : 'Agent trace'}
+            </span>
           </div>
+
+          {/* ReAct thoughts — shown during streaming and in completed trace */}
+          {thoughts.length > 0 && (
+            <div style={{ marginBottom: 10, borderBottom: '1px solid #25252E', paddingBottom: 10 }}>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9.5, fontWeight: 700, color: '#FFE600', letterSpacing: '.07em', textTransform: 'uppercase', marginBottom: 7 }}>ReAct loop</div>
+              {thoughts.map((t, i) => (
+                <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 5, fontSize: 11.5, lineHeight: 1.5 }}>
+                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 700, color: '#7A7A88', flexShrink: 0, marginTop: 1 }}>T{i + 1}</span>
+                  <span style={{ color: '#C4C4D0', flex: 1 }}>{t.thought}</span>
+                  {t.next_tool && t.next_tool !== 'done' && (
+                    <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 600, color: '#5BD89A', flexShrink: 0 }}>→ {t.next_tool}</span>
+                  )}
+                  {t.next_tool === 'done' && (
+                    <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 600, color: '#FFE600', flexShrink: 0 }}>done</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
           {plan && (
             <div style={{ display: 'flex', gap: 8, fontSize: 12.5, lineHeight: 1.55, color: '#9A9AA6', paddingBottom: 4 }}>
               <span style={{ color: '#FFE600', fontWeight: 700, flexShrink: 0, fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>plan</span>
-              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>{plan.reasoning || plan.customer_name}</span>
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>{plan.planner_mode}</span>
             </div>
           )}
           {steps.map((s, i) => <StepRow key={i} step={s} idx={i} />)}
           {!msg.loading && (
             <div style={{ borderTop: '1px solid #25252E', marginTop: 9, paddingTop: 9, fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, color: '#7A7A88' }}>
-              {steps.length} calls · {plan?.planner_mode ?? ''} planner · rbac: {msg.response?.user.roles.join(',')}
+              {steps.filter(s => s.tool).length} tool calls · {thoughts.length} react steps · {plan?.planner_mode ?? ''} · rbac: {msg.response?.user.roles.join(',')}
             </div>
           )}
         </div>
@@ -171,6 +231,7 @@ function extractRec(answer: string): string {
 }
 
 function PortfolioView({ issues, answer }: { issues: Array<Record<string, unknown>>; answer: string }) {
+  const { navigate } = useNav()
   const byCustomer: Record<string, Array<Record<string, unknown>>> = {}
   for (const iss of issues) {
     const cn = String(iss.customer_name ?? 'Unknown')
@@ -197,8 +258,8 @@ function PortfolioView({ issues, answer }: { issues: Array<Record<string, unknow
                 const sm = statusMeta(String(it.status ?? ''))
                 const pm = prioMeta(sev)
                 return (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '10px 13px', borderTop: i > 0 ? '1px solid #EDEDF1' : 'none', background: '#fff' }}>
-                    <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11.5, fontWeight: 600, color: '#6B6B78', flexShrink: 0, width: 62 }}>{issId(Number(it.id))}</span>
+                  <div key={i} onClick={() => navigate('issues', Number(it.id))} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '10px 13px', borderTop: i > 0 ? '1px solid #EDEDF1' : 'none', background: '#fff', cursor: 'pointer' }}>
+                    <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11.5, fontWeight: 600, color: '#2A5BC0', flexShrink: 0, width: 62 }}>{issId(Number(it.id))}</span>
                     <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: '#23232B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{String(it.title ?? '')}</span>
                     <span style={{ fontSize: 10.5, fontWeight: 700, color: pm.fg, background: pm.bg, padding: '2px 7px', borderRadius: 5, fontFamily: "'JetBrains Mono', monospace", flexShrink: 0 }}>{severityToPriority(sev)}</span>
                     <span style={{ fontSize: 11, fontWeight: 700, color: sm.fg, background: sm.bg, padding: '3px 9px', borderRadius: 20, flexShrink: 0 }}>{String(it.status ?? '').replace(/_/g, ' ')}</span>
@@ -219,9 +280,11 @@ function PortfolioView({ issues, answer }: { issues: Array<Record<string, unknow
 }
 
 function AnswerCard({ msg }: { msg: ChatMessage }) {
+  const { navigate } = useNav()
   const r = msg.response
   if (!r) return null
-  const skillStep = r.steps.find(s => s.skill === 'customer_escalation_summary')
+  // risk_action_agent replaced customer_escalation_summary in the 3-agent refactor
+  const skillStep = r.steps.find(s => s.skill === 'risk_action_agent')
   const skill = skillStep?.output as SkillOutput | undefined
   const issuesStep = r.steps.find(s => s.tool === 'get_open_issues')
   const issues = (issuesStep?.output ?? []) as Array<Record<string, unknown>>
@@ -234,29 +297,43 @@ function AnswerCard({ msg }: { msg: ChatMessage }) {
 
   const profileStep = r.steps.find(s => s.tool === 'get_customer_profile')
   const profile = profileStep?.output as Record<string, unknown> | undefined
-  const customerName = profile?.name ?? r.plan?.customer_name ?? ''
+
+  // Derive customer identity from whichever source is available
+  const customerName = String(
+    profile?.name ??
+    (issues.length > 0 ? issues[0].customer_name : undefined) ??
+    r.plan?.customer_name ?? ''
+  )
+  const customerSegment = String(profile?.segment ?? '')
+  const customerHealth  = String(profile?.health_status ?? '')
+
+  // Structured data present → use component view; absent → fall back to markdown
+  const hasStructuredData = Boolean(profile) || issues.length > 0 || allIssues.length > 0
 
   const citations: Array<{ label: string; dot: string }> = []
-  if (profile) citations.push({ label: String(customerName), dot: '#2A5BC0' })
+  if (customerName) citations.push({ label: customerName, dot: '#2A5BC0' })
   if (issues.length) citations.push(...issues.map((i) => ({ label: issId(Number(i.id)), dot: '#23232B' })))
 
   return (
     <div style={{ background: '#fff', border: '1px solid #E6E6EC', borderRadius: 15, padding: '18px 20px' }}>
-      {/* Cross-customer portfolio view */}
       {allIssues.length > 0 && <PortfolioView issues={allIssues} answer={r.answer} />}
 
-      {/* Single-customer intro — only when not a portfolio query */}
-      {allIssues.length === 0 && (profile ? (
-        <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.6, color: '#2E2E38', fontWeight: 500 }}>
-          <strong>{String(customerName)}</strong> ({String(profile.segment ?? '')}) — health: <strong>{String(profile.health_status ?? '')}</strong>
+      {/* Single-customer structured view — never mix with markdown */}
+      {allIssues.length === 0 && hasStructuredData && customerName && (
+        <p style={{ margin: '0 0 2px', fontSize: 14.5, lineHeight: 1.6, color: '#2E2E38', fontWeight: 500 }}>
+          <button onClick={() => navigate('issues', issues[0] ? Number(issues[0].id) : undefined)} style={{ all: 'unset', cursor: 'pointer', fontWeight: 700, color: '#2A5BC0', textDecoration: 'underline', textDecorationStyle: 'dotted', textUnderlineOffset: '3px' }}>{customerName}</button>
+          {customerSegment && <span style={{ color: '#6B6B78' }}> ({customerSegment})</span>}
+          {customerHealth && <span> — health: <strong>{customerHealth}</strong></span>}
         </p>
-      ) : (
+      )}
+
+      {/* Markdown fallback — only when no structured tool data is available (cache hits, general answers) */}
+      {allIssues.length === 0 && !hasStructuredData && (
         <div style={{ fontSize: 14.5, color: '#2E2E38' }}
           dangerouslySetInnerHTML={{ __html: mdToHtml(r.answer) }}
         />
-      ))}
+      )}
 
-      {/* issues table — single customer only */}
       {allIssues.length === 0 && issues.length > 0 && (
         <div style={{ marginTop: 14, border: '1px solid #EDEDF1', borderRadius: 11, overflow: 'hidden' }}>
           {issues.map((it, i) => {
@@ -264,8 +341,8 @@ function AnswerCard({ msg }: { msg: ChatMessage }) {
             const sm = statusMeta(String(it.status ?? ''))
             const pm = prioMeta(sev)
             return (
-              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 11, width: '100%', padding: '11px 13px', borderTop: i > 0 ? '1px solid #EDEDF1' : 'none', background: '#fff' }}>
-                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11.5, fontWeight: 600, color: '#6B6B78', flexShrink: 0, width: 72 }}>{issId(Number(it.id))}</span>
+              <div key={i} onClick={() => navigate('issues', Number(it.id))} style={{ display: 'flex', alignItems: 'center', gap: 11, width: '100%', padding: '11px 13px', borderTop: i > 0 ? '1px solid #EDEDF1' : 'none', background: '#fff', cursor: 'pointer' }}>
+                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11.5, fontWeight: 600, color: '#2A5BC0', flexShrink: 0, width: 72 }}>{issId(Number(it.id))}</span>
                 <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: '#23232B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{String(it.title ?? '')}</span>
                 <span style={{ fontSize: 10.5, fontWeight: 700, color: pm.fg, background: pm.bg, padding: '2px 7px', borderRadius: 5, fontFamily: "'JetBrains Mono', monospace", flexShrink: 0 }}>{severityToPriority(sev)}</span>
                 <span style={{ fontSize: 11, fontWeight: 700, color: sm.fg, background: sm.bg, padding: '3px 9px', borderRadius: 20, flexShrink: 0 }}>{String(it.status ?? '')}</span>
@@ -275,7 +352,6 @@ function AnswerCard({ msg }: { msg: ChatMessage }) {
         </div>
       )}
 
-      {/* latest history — single customer only */}
       {allIssues.length === 0 && history.length > 0 && (
         <div style={{ marginTop: 14 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: '#9A9AA6', textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 5 }}>Latest status</div>
@@ -286,11 +362,10 @@ function AnswerCard({ msg }: { msg: ChatMessage }) {
         </div>
       )}
 
-      {/* escalation skill — single customer only */}
       {allIssues.length === 0 && skill && (
         <div style={{ marginTop: 16, border: '1px solid #E6E6EC', borderRadius: 13, overflow: 'hidden' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 15px', background: '#1C1C23' }}>
-            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 700, color: '#FFE600', letterSpacing: '.06em' }}>SKILL</span>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 700, color: '#FFE600', letterSpacing: '.06em' }}>RISK · ACTION</span>
             <span style={{ fontSize: 13.5, fontWeight: 700, color: '#fff' }}>Customer Escalation Summary</span>
             <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 800, color: '#fff', background: riskMeta(skill.risk_level).fg, padding: '4px 11px', borderRadius: 20, letterSpacing: '.04em' }}>{skill.risk_level.toUpperCase()}</span>
           </div>
@@ -300,7 +375,7 @@ function AnswerCard({ msg }: { msg: ChatMessage }) {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, marginTop: 15 }}>
               <div>
                 <div style={{ fontSize: 10.5, fontWeight: 700, color: '#9A9AA6', textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 8 }}>Risk rationale</div>
-                <p style={{ margin: 0, fontSize: 12.5, color: '#4A4A55' }}>{skill.risk_rationale}</p>
+                <p style={{ margin: 0, fontSize: 12.5, color: '#4A4A55' }}>{skill.rationale}</p>
               </div>
               <div>
                 <div style={{ fontSize: 10.5, fontWeight: 700, color: '#9A9AA6', textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 8 }}>Missing information</div>
@@ -325,7 +400,6 @@ function AnswerCard({ msg }: { msg: ChatMessage }) {
         </div>
       )}
 
-      {/* next action — single customer only */}
       {allIssues.length === 0 && nextAction && (
         <div style={{ marginTop: 14, border: '1px solid #E6E6EC', borderRadius: 12, padding: '14px 15px', background: '#FAFAFC' }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: '#9A9AA6', textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 7 }}>Recommended next action</div>
@@ -338,15 +412,18 @@ function AnswerCard({ msg }: { msg: ChatMessage }) {
         </div>
       )}
 
-      {/* citations */}
       {citations.length > 0 && (
         <div style={{ marginTop: 14, paddingTop: 13, borderTop: '1px solid #EDEDF1', display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 11, fontWeight: 700, color: '#9A9AA6', textTransform: 'uppercase', letterSpacing: '.07em' }}>Grounded in</span>
-          {citations.map((c, i) => (
-            <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 600, color: '#3A3A44', background: '#F1F1F4', border: '1px solid #E6E6EC', padding: '4px 9px', borderRadius: 7 }}>
-              <span style={{ width: 6, height: 6, borderRadius: '50%', background: c.dot, flexShrink: 0 }} />{c.label}
-            </span>
-          ))}
+          {citations.map((c, i) => {
+            const issMatch = c.label.match(/^ISS-(\d+)$/)
+            const issNum = issMatch ? parseInt(issMatch[1]) : null
+            return (
+              <span key={i} onClick={() => issNum !== null ? navigate('issues', issNum) : navigate('issues')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 600, color: '#3A3A44', background: '#F1F1F4', border: '1px solid #E6E6EC', padding: '4px 9px', borderRadius: 7, cursor: 'pointer' }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: c.dot, flexShrink: 0 }} />{c.label}
+              </span>
+            )
+          })}
         </div>
       )}
     </div>
@@ -361,41 +438,125 @@ export default function Assistant() {
   const [sessionId] = useState(() => 'atlas-' + uid())
   const chatRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight
-  }, [messages])
+  function scrollBottom() {
+    requestAnimationFrame(() => {
+      if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight
+    })
+  }
 
-  async function send(text?: string) {
+  function update(id: string, patch: Partial<ChatMessage>) {
+    setMessages(prev => prev.map(m => m.id === id ? { ...m, ...patch } : m))
+  }
+
+  async function send(text?: string, confirmedCustomer = '') {
     const q = (text ?? draft).trim()
     if (!q) return
     setDraft('')
     const userMsg: ChatMessage = { id: uid(), role: 'user', text: q }
-    const assistMsg: ChatMessage = { id: uid(), role: 'assistant', loading: true }
+    const assistId = uid()
+    const assistMsg: ChatMessage = {
+      id: assistId, role: 'assistant', loading: true,
+      currentStage: 'planning', partialSteps: [], reactThoughts: [],
+    }
     setMessages(prev => [...prev, userMsg, assistMsg])
+    scrollBottom()
 
     const t0 = Date.now()
+    let accAnswer = ''
+    let finalUser: QueryResponse['user'] | null = null
+    let finalPlan: import('../types').QueryPlan | null = null
+    let finalSteps: QueryStep[] = []
+    let finalTraceId = ''
+    let accThoughts: import('../types').ReactThought[] = []
+
     try {
-      const res: QueryResponse = await sendQuery(q, sessionId)
-      const ms = Date.now() - t0
-      setMessages(prev => prev.map(m => m.id === assistMsg.id ? { ...m, loading: false, response: res } : m))
-      addTrace({
-        id: 'tr-' + uid(),
-        ts: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        user: user?.displayName ?? '',
-        role: user?.role ?? '',
-        query: q,
-        tools: res.steps.filter(s => s.tool).map(s => ({ name: s.tool!, ms: 100 })),
-        ms,
-        status: 'ok',
-        grounded: res.steps.some(s => s.skill === 'customer_escalation_summary'),
-        rbac: 'allowed',
-        statusCode: 200,
-      })
+      await sendQueryStream(q, sessionId, (ev) => {
+        if (ev.type === 'react_thought') {
+          accThoughts = [...accThoughts, { thought: ev.thought, next_tool: ev.next_tool, iteration: ev.iteration }]
+          update(assistId, { reactThoughts: accThoughts, currentStage: 'tools' })
+          scrollBottom()
+
+        } else if (ev.type === 'disambiguation') {
+          update(assistId, {
+            loading: false,
+            disambiguation: { matches: ev.matches, original_query: ev.original_query },
+          })
+          scrollBottom()
+          return
+
+        } else if (ev.type === 'planning') {
+          finalPlan = ev.plan
+          update(assistId, { partialPlan: ev.plan, currentStage: 'tools' })
+          scrollBottom()
+
+        } else if (ev.type === 'tool_result') {
+          finalSteps = [...finalSteps, ev.step]
+          update(assistId, { partialSteps: finalSteps, currentStage: 'tools' })
+          scrollBottom()
+
+        } else if (ev.type === 'risk_action') {
+          finalSteps = [...finalSteps, ev.step]
+          update(assistId, { partialSteps: finalSteps, currentStage: 'response' })
+          scrollBottom()
+
+        } else if (ev.type === 'token') {
+          accAnswer += ev.delta
+          update(assistId, { streamingAnswer: accAnswer, currentStage: 'response' })
+          scrollBottom()
+
+        } else if (ev.type === 'answer') {
+          accAnswer = ev.text
+          update(assistId, { streamingAnswer: accAnswer, currentStage: 'response' })
+          scrollBottom()
+
+        } else if (ev.type === 'error') {
+          const errMsg = ev.detail || 'Request failed'
+          update(assistId, { loading: false, streamingAnswer: undefined, text: errMsg })
+          addTrace({ id: 'tr-' + uid(), ts: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }), user: user?.displayName ?? '', role: user?.role ?? '', query: q, tools: [], ms: Date.now() - t0, status: ev.status === 403 ? 'warn' : 'error', grounded: false, rbac: ev.status === 403 ? 'denied' : 'allowed', statusCode: ev.status })
+
+        } else if (ev.type === 'done') {
+          finalUser = ev.user as QueryResponse['user']
+          finalTraceId = ev.trace_id
+        }
+      }, undefined, confirmedCustomer)
+
+      // Assemble final QueryResponse from accumulated stream data
+      if (finalUser && finalPlan) {
+        const response: QueryResponse = {
+          user: finalUser,
+          answer: accAnswer,
+          plan: finalPlan,
+          steps: finalSteps,
+          session_context: { history: [] },
+          trace_id: finalTraceId,
+        }
+        const ms = Date.now() - t0
+        update(assistId, {
+          loading: false, response,
+          streamingAnswer: undefined, partialSteps: undefined,
+          partialPlan: undefined, currentStage: null,
+          reactThoughts: accThoughts,
+        })
+        addTrace({
+          id: 'tr-' + uid(),
+          ts: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          user: user?.displayName ?? '',
+          role: user?.role ?? '',
+          query: q,
+          tools: finalSteps.filter(s => s.tool).map(s => ({ name: s.tool!, ms: 100 })),
+          ms,
+          status: 'ok',
+          grounded: finalSteps.some(s => s.tool || s.skill === 'risk_action_agent'),
+          rbac: 'allowed',
+          statusCode: 200,
+        })
+      }
+
     } catch (err: unknown) {
       const ms = Date.now() - t0
       const status = (err as { status?: number }).status ?? 500
       const errMsg = err instanceof Error ? err.message : 'Request failed'
-      setMessages(prev => prev.map(m => m.id === assistMsg.id ? { ...m, loading: false, response: undefined, text: errMsg } : m))
+      update(assistId, { loading: false, streamingAnswer: undefined, partialSteps: undefined, partialPlan: undefined, currentStage: null, text: errMsg })
       addTrace({ id: 'tr-' + uid(), ts: new Date().toLocaleTimeString('en-GB'), user: user?.displayName ?? '', role: user?.role ?? '', query: q, tools: [], ms, status: status === 403 ? 'warn' : 'error', grounded: false, rbac: status === 403 ? 'denied' : 'allowed', statusCode: status })
     }
   }
@@ -444,8 +605,28 @@ export default function Assistant() {
                     </span>
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    {m.loading && !m.response && (
-                      <div style={{ background: '#fff', border: '1px solid #E6E6EC', borderRadius: 15, padding: '18px 20px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                    {/* Disambiguation — agent found multiple customer matches */}
+                    {m.disambiguation && (
+                      <DisambiguationCard
+                        dis={m.disambiguation}
+                        onSelect={(name) => {
+                          setMessages(prev => prev.filter(x => x.id !== m.id && x.text !== m.disambiguation?.original_query))
+                          send(m.disambiguation!.original_query, name)
+                        }}
+                      />
+                    )}
+                    {/* Streaming answer — shown while loading, token by token */}
+                    {m.loading && m.streamingAnswer && (
+                      <div style={{ background: '#fff', border: '1px solid #E6E6EC', borderRadius: 15, padding: '18px 20px', marginBottom: 8 }}>
+                        <div style={{ fontSize: 14.5, color: '#2E2E38', lineHeight: 1.65 }}
+                          dangerouslySetInnerHTML={{ __html: mdToHtml(m.streamingAnswer) }}
+                        />
+                        <span style={{ display: 'inline-block', width: 2, height: 16, background: '#23232B', marginLeft: 1, verticalAlign: 'text-bottom', animation: 'blink 1s step-end infinite' }} />
+                      </div>
+                    )}
+                    {/* Spinner — only before streaming answer starts */}
+                    {m.loading && !m.streamingAnswer && (
+                      <div style={{ background: '#fff', border: '1px solid #E6E6EC', borderRadius: 15, padding: '18px 20px', display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
                         <span style={{ width: 13, height: 13, border: '2px solid #E6E6EC', borderTopColor: '#23232B', borderRadius: '50%', animation: 'spin .7s linear infinite', display: 'inline-block' }} />
                         <span style={{ fontSize: 16, color: '#9A9AA6' }}>Thinking…</span>
                       </div>

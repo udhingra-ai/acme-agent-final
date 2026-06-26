@@ -8,7 +8,11 @@ services:
       - "443:443"
     depends_on:
       app:
-        condition: service_started
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 128m
 
   app:
     build: ./app
@@ -27,9 +31,19 @@ services:
       - "8000:8000"
     volumes:
       - ./evals:/evals:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
 
   postgres:
-    image: postgres:16
+    image: pgvector/pgvector:pg16
     container_name: acme-postgres
     environment:
       POSTGRES_USER: acme
@@ -39,11 +53,16 @@ services:
       - "5432:5432"
     volumes:
       - ./db/init:/docker-entrypoint-initdb.d
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U acme -d acme_ops"]
       interval: 5s
       timeout: 5s
       retries: 20
+    deploy:
+      resources:
+        limits:
+          memory: 512m
 
   redis:
     image: redis:7
@@ -56,6 +75,10 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 256m
 
   keycloak:
     image: quay.io/keycloak/keycloak:25.0
@@ -69,11 +92,15 @@ services:
     ports:
       - "8080:8080"
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/realms/acme/.well-known/openid-configuration || exit 1"]
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9000' 2>/dev/null || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 20
       start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 768m
 
   mcp-server:
     build: ./mcp_server
@@ -89,3 +116,10 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+volumes:
+  postgres_data:

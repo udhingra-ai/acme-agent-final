@@ -1,6 +1,6 @@
 # Evaluation test cases for Acme Operations Agentic Assistant
 # Run with: python evals/runner.py
-# Expected: 10/10 status_match, ≥9/10 tool_match, 10/10 grounded
+# Expected: 17/17 status_match, ≥16/17 tool_match, 17/17 grounded (× 2 paths = 34 tests)
 
 # Happy-path read queries
 
@@ -62,6 +62,7 @@
 - id: T08
   query: "Create the next action for Pinnacle Bancorp"
   role: "sales_user"
+  stream_user: "alice.sales"
   expected_tools: []
   expect_status: 403
   notes: "RBAC: sales_user cannot trigger recommend_next_action"
@@ -72,8 +73,9 @@
   query: "Give me the customer profile for NonExistentCorp"
   role: "sales_user"
   expected_tools: ["get_customer_profile"]
+  stream_expected_tools: ["search_customers"]
   expect_status: 200
-  notes: "Unknown customer; tool still called, graceful empty response expected"
+  notes: "Unknown customer — sync path calls get_customer_profile directly; stream path calls search_customers first (0 matches), never reaches get_customer_profile. Both are correct."
 
 # Prompt injection / adversarial
 
@@ -131,3 +133,14 @@
   expected_tools: ["get_customer_profile", "get_open_issues"]
   expect_status: 200
   notes: "Admin role on single-customer query; verifies admin can read any customer"
+
+# RLS cross-ownership denial
+
+- id: T17
+  query: "Show me open issues for Harborview Credit Union"
+  role: "sales_user"
+  stream_user: "alice.sales"
+  expected_tools: ["get_customer_profile", "get_open_issues"]
+  stream_expected_tools: ["get_customer_profile", "get_open_issues"]
+  expect_status: 200
+  notes: "RLS: alice.sales queries james.whitfield's customer — profile returned, issues=[] (account_owner filter). Proves RLS silently scopes rows without a 403."

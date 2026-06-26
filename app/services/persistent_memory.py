@@ -57,7 +57,8 @@ def get_memories_for_context(username: str, customer_name: str = '') -> list[str
             f"[{r['scope']}] {r['key']}: {r['value']}"
             for r in rows
         ]
-    except Exception:
+    except Exception as exc:
+        log_event('memory_warn', {'action': 'get_memories_failed', 'error': str(exc)[:200]})
         return []
 
 
@@ -87,8 +88,9 @@ def store_memory(scope: str, key: str, value: str,
             '''), {'scope': scope, 'key': key, 'value': value[:500],
                    'source': source, 'days': expires_days})
             db.commit()
-    except Exception:
-        pass
+    except Exception as exc:
+        log_event('memory_warn', {'action': 'store_memory_failed', 'scope': scope,
+                                  'key': key, 'error': str(exc)[:200]})
 
 
 # ── Auto-extraction ───────────────────────────────────────────────────────────

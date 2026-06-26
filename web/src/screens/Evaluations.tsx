@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { fetchEvals, runEvalsStream } from '../api/evals'
 import { fmtMs } from '../utils'
+import { useAuth } from '../store/AuthContext'
 import type { EvalResult, EvalSummary } from '../types'
 
 function Badge({ v }: { v: boolean | 'na' }) {
@@ -18,6 +19,8 @@ function ProgressBar({ current, total }: { current: number; total: number }) {
 }
 
 export default function Evaluations() {
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
   const [summary, setSummary] = useState<EvalSummary | null>(null)
   const [results, setResults] = useState<EvalResult[]>([])
   const [loading, setLoading] = useState(true)
@@ -73,8 +76,9 @@ export default function Evaluations() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 20 }}>
           <button
             onClick={startRun}
-            disabled={running}
-            style={{ all: 'unset', cursor: running ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 9, background: running ? '#D0D0DA' : '#23232B', color: '#fff', padding: '11px 20px', borderRadius: 10, fontWeight: 700, fontSize: 14, opacity: running ? .8 : 1 }}
+            disabled={running || !isAdmin}
+            title={!isAdmin ? 'Admin role required' : undefined}
+            style={{ all: 'unset', cursor: (running || !isAdmin) ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 9, background: (running || !isAdmin) ? '#D0D0DA' : '#23232B', color: '#fff', padding: '11px 20px', borderRadius: 10, fontWeight: 700, fontSize: 14, opacity: (running || !isAdmin) ? .5 : 1 }}
           >
             {running ? (
               <>

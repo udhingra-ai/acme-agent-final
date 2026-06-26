@@ -9,16 +9,19 @@ A production-pattern agentic assistant for enterprise operations teams.
 | Brief requirement | Implementation | Evidence | How to verify |
 |---|---|---|---|
 | Keycloak authentication | JWT bearer token flow; realm import at startup | `keycloak/realm-export.json`, `app/auth/security.py` | `curl POST /auth/token` |
-| Role-based access control | Server-side `require_role()` in orchestrator | `app/agents/orchestrator.py` | `sales_user` + write query → 403 |
-| Bounded 3-agent workflow | Planning → Risk/Action → Response agents with clear boundaries | `app/agents/` | `agent_stage` fields in logs |
-| Dynamic LLM tool use | OpenAI planner + rule-based fallback | `app/agents/planner.py` | `planner_mode` field in response |
+| Role-based access control | Server-side `require_role()` in orchestrator; RBAC gate node in LangGraph | `app/agents/graph_orchestrator.py` | `sales_user` + write query → 403 |
+| LangGraph ReAct loop (primary) | 5-node StateGraph: pre_flight → think → rbac_gate → execute → risk_assess | `app/agents/graph_orchestrator.py` | SSE events on `POST /query/stream` |
+| Bounded sync workflow (secondary) | Planning → Risk/Action → Response agents; deterministic plan | `app/agents/orchestrator.py`, `app/agents/planner.py` | `agent_stage` fields in `POST /query` logs |
+| Parallel tool execution | ThreadPoolExecutor fans out independent tools (profile + issues simultaneously) | `app/agents/graph_orchestrator.py` `_execute` | `planner_mode: react_llm` + multi-step in one iteration |
+| Dynamic LLM tool use | OpenAI ReAct reasoning; rule-based fallback when LLM unavailable | `app/agents/graph_orchestrator.py` | `planner_mode` field in response |
 | Deterministic primary-issue selection | Severity → status → newest ID | `app/agents/risk_action_agent.py` | `selected_primary_issue` in response steps |
-| PostgreSQL | 5 tables, parameterised queries, seed data | `db/init/`, `app/repositories/` | `docker exec acme-postgres psql …` |
-| Redis | Session history (1 h TTL) + profile cache (15 min TTL) | `app/services/memory_service.py` | `docker exec acme-redis redis-cli KEYS "*"` |
-| MCP server | Tool registry + 4 read endpoints | `mcp_server/server.py` | `curl http://localhost:8100/tools` |
+| PostgreSQL | 5 tables + performance indexes (GIN trgm, composite), parameterised queries | `db/init/`, `app/repositories/` | `docker exec acme-postgres psql …` |
+| Redis | Two-layer cache (L1 exact SHA-256 / L2 pgvector semantic), session history, rate limiter | `app/services/query_cache.py`, `app/services/memory_service.py` | `docker exec acme-redis redis-cli KEYS "*"` |
+| MCP server | Tool registry + 4 read endpoints; shared-secret auth | `mcp_server/server.py` | `curl http://localhost:8100/tools` |
 | Reusable Skill | Customer Escalation Skill — deterministic risk rubric | `app/skills/customer_escalation.py` | `skill: risk_action_agent` in response steps |
+| Autonomous agents | Health sweep (15 min), escalation CDC, churn signal (nightly); write only to `briefings` | `app/services/autonomous_agent.py` | `GET /briefings` after sweep |
 | Docker Compose | Single command; 6 services (nginx, app, postgres, redis, keycloak, mcp-server) | `docker-compose.yml` | `docker compose ps` |
-| Evaluation | 14 test cases; tool_match, status_match, grounded, latency | `evals/` | `python evals/runner.py` |
+| Evaluation | 16 test cases × 2 paths = 32 tests; tool_match, status_match, grounded, latency | `evals/` | `python evals/runner.py` |
 | Observability | Structured JSON: agent_output (trace_id), tool_call (via), request_trace | `app/observability/` | `docker compose logs -f app` |
 
 ---
@@ -64,11 +67,14 @@ Copy `.env.example` to `.env`. The only variable that needs a real value for ful
 
 All passwords: `Password123!`
 
-| Username | Role | Can do |
-|---|---|---|
-| `alice.sales` | `sales_user` | Profile lookups, issue lists, issue history |
-| `bob.support` | `support_user` | All of the above + recommend/create next actions |
-| `carol.admin` | `admin` | All of the above |
+| Username | Role | Owns | Can do |
+|---|---|---|---|
+| `alice.sales` | `sales_user` | Pinnacle Bancorp, Apex, Nexus, Meridian, Fortuna, Sterling, Atlas (7) | Profile lookups, issue lists, issue history for owned customers |
+| `james.whitfield` | `sales_user` | Sovereign Life, Harborview, Dominion (3) | Same, for his own customers |
+| `bob.support` | `support_user` | — (all customers) | All reads + recommend/create next actions |
+| `carol.admin` | `admin` | — (all customers) | All of the above |
+
+**RLS note:** `sales_user` sees only their `account_owner` rows. Querying a customer owned by another sales rep returns the profile but 0 issues (RLS silently filters). Eval T17 demonstrates this: `alice.sales` queries Harborview Credit Union (owned by `james.whitfield`) and receives a 200 response with an empty issue list.
 
 **RBAC note:** Queries that include "suggest", "recommend", "next action", or "create" will trigger `recommend_next_action` in the plan, which requires `support_user` or `admin`. A `sales_user` sending such a query receives HTTP 403. Pure read queries (profile, issues, history) always succeed for `sales_user`.
 
@@ -132,33 +138,46 @@ curl -X POST http://localhost:8000/query \
 
 See [`docs/architecture.md`](docs/architecture.md) for the full diagram and component table.
 
-**Bounded 3-agent workflow:**
+**Two execution paths — same tools, same RBAC:**
 
+**Primary: LangGraph ReAct loop (`POST /query/stream`, SSE)**
 ```
-User → nginx :443 (TLS) → FastAPI app :8000 → JWT validation + RBAC
+User → nginx :443 (TLS) → FastAPI app :8000 → JWT validation
                                              ↓
-                                [Agent 1 — Planning Agent]
-                                  OpenAI LLM → structured plan {steps, reasoning}
-                                  (rule-based fallback if LLM unavailable)
+                                [pre_flight node]
+                                  Prompt guard (injection/jailbreak detection)
+                                  Two-layer cache check (L1 Redis exact + L2 pgvector semantic)
+                                  Customer name disambiguation via pg_trgm
                                              ↓
-                                [Tool Execution — orchestrator/app layer]
-                                  RBAC enforced here (not by LLMs)
+                                [think node — LLM ReAct]
+                                  OpenAI: "what tools to call next?"
+                                  Returns next_tools[] (supports parallel fan-out)
+                                  Rule-based fallback if LLM unavailable
+                                             ↓
+                                [rbac_gate node]
+                                  Enforces write-tool restrictions server-side (not by LLM)
+                                  → 403 if sales_user requests recommend_next_action
+                                             ↓
+                                [execute node — parallel ThreadPoolExecutor]
                                   → get_customer_profile  (Redis cache → MCP → DB fallback)
-                                  → get_open_issues       (MCP → DB fallback)
+                                  → get_open_issues       (MCP → DB fallback)      ← parallel
                                   → get_issue_history     (MCP → DB fallback)
-                                  → list_all_open_issues  (MCP → DB fallback)
                                   → recommend_next_action (direct DB, role-gated)
+                                  Loops back to think until done or MAX_ITERATIONS=6
                                              ↓
-                                [Agent 2 — Risk/Action Agent]
-                                  Deterministic primary-issue selection
-                                  Risk rubric (severity, health, staleness)
-                                  Structured output {selected_primary_issue, risk_level, urgency}
+                                [risk_assess node]
+                                  Deterministic primary-issue selection (severity → status → newest)
+                                  Risk rubric → {risk_level, urgency, recommended_next_action}
                                              ↓
-                                [Agent 3 — Response Agent]
-                                  LLM synthesis (or rule-based fallback)
-                                  Never invents facts outside tool outputs
-                                             ↓
-                                  Redis session write + structured log with trace_id
+                                  LLM answer synthesis → SSE done event
+                                  Redis session write + write_audit log with trace_id
+```
+
+**Secondary: Deterministic sync orchestrator (`POST /query`)**
+```
+User → JWT validation → Planner Agent (LLM plan or rule fallback)
+     → Tool execution (same RBAC, same tool layer)
+     → Risk/Action Agent → Response Agent → JSON response
 ```
 
 6 services: nginx (TLS), app, postgres, redis, keycloak, mcp-server.
@@ -179,7 +198,7 @@ pip install -r evals/requirements.txt
 python evals/runner.py
 ```
 
-Results are written to `evals/reports/results.json`. Expected: **14/14 tool_match, 14/14 status_match, 14/14 grounded**.
+Results are written to `evals/reports/results.json`. Expected: **≥31/32 tool_match, 32/32 status_match, 32/32 grounded** (16 test cases × 2 paths; 1 tool-match miss tolerated for LLM non-determinism).
 
 ---
 
@@ -187,17 +206,18 @@ Results are written to `evals/reports/results.json`. Expected: **14/14 tool_matc
 
 Every request emits structured JSON logs to stdout:
 
-- `agent_output` — agent stage (`planning_agent` / `risk_action_agent` / `response_agent`), `trace_id`, key outputs
+- `agent_output` — agent stage / planner_mode, `trace_id`, key outputs
 - `tool_call` — tool name, `via` (`mcp` / `cache` / `direct_db_fallback`), latency
-- `request_trace` — path, method, elapsed_ms
+- `request_trace` — path, method, elapsed_ms, trace_id
 - `timing` — function-level latency (via `@timed` decorator)
 
-Example (single request, trace_id threads all 3 agent stages):
+Example (stream path — LangGraph ReAct, trace_id threads all nodes):
 ```json
-{"ts":"2026-06-25T13:13:38","kind":"agent_output","payload":{"agent_stage":"planning_agent","trace_id":"cbcc32f7","planner_mode":"llm","selected_tools":["get_customer_profile","get_open_issues"]}}
+{"ts":"2026-06-25T13:13:37","kind":"request_trace","payload":{"path":"/query/stream","trace_id":"cbcc32f7","status_code":200,"elapsed_ms":3241}}
+{"ts":"2026-06-25T13:13:37","kind":"agent_output","payload":{"agent_stage":"react_llm","trace_id":"cbcc32f7","planner_mode":"react_llm","iteration":1,"next_tools":["get_customer_profile","get_open_issues"]}}
 {"ts":"2026-06-25T13:13:38","kind":"tool_call","payload":{"tool":"get_customer_profile","via":"mcp","customer_name":"Pinnacle Bancorp"}}
+{"ts":"2026-06-25T13:13:38","kind":"tool_call","payload":{"tool":"get_open_issues","via":"mcp","customer_name":"Pinnacle Bancorp"}}
 {"ts":"2026-06-25T13:13:38","kind":"agent_output","payload":{"agent_stage":"risk_action_agent","trace_id":"cbcc32f7","primary_issue_id":1,"risk_level":"Critical","urgency":"immediate"}}
-{"ts":"2026-06-25T13:13:41","kind":"agent_output","payload":{"agent_stage":"response_agent","trace_id":"cbcc32f7","via":"llm","model":"gpt-4.1-mini"}}
 ```
 
 View live: `docker compose logs -f app`

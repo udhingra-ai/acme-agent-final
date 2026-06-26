@@ -9,15 +9,18 @@ Concise reference for panel Q&A. All claims are verifiable from the running stac
 | Brief Requirement | Implementation | File | How to verify |
 |---|---|---|---|
 | Keycloak auth | JWT bearer token flow + realm import | `keycloak/realm-export.json`, `app/auth/security.py` | `curl POST /auth/token` returns JWT |
-| Role-based access | Server-side `require_role()` in orchestrator | `app/agents/orchestrator.py:42` | `sales_user` + "create" query → 403 |
-| Dynamic LLM tool use | OpenAI planner + rule fallback | `app/agents/planner.py` | `planner_mode: llm` in response |
-| PostgreSQL | 5-table schema, seed data, parameterised queries | `db/init/`, `app/repositories/` | `docker exec acme-postgres psql …` |
-| Redis | Session history (1 h TTL) + profile cache (15 min TTL) | `app/services/memory_service.py` | `docker exec acme-redis redis-cli KEYS "*"` |
-| MCP server | Tool registry at `:8100/tools` | `mcp_server/server.py` | `curl http://localhost:8100/tools` |
-| Reusable Skill | Customer Escalation Skill — deterministic rubric | `app/skills/customer_escalation.py` | Skill output in `/query` response steps |
+| Role-based access | `require_role()` in sync orchestrator; `rbac_gate` node in LangGraph StateGraph | `app/agents/orchestrator.py`, `app/agents/graph_orchestrator.py` | `sales_user` + "create" query → 403 |
+| LangGraph ReAct loop (primary) | 5-node StateGraph; LLM reasoning per iteration; parallel tool fan-out | `app/agents/graph_orchestrator.py` | SSE events on `POST /query/stream` |
+| Dynamic LLM tool use | OpenAI ReAct reasoning + rule fallback; returns `next_tools[]` for parallel execution | `app/agents/graph_orchestrator.py`, `app/agents/planner.py` | `planner_mode: react_llm` in stream events |
+| Parallel tool execution | ThreadPoolExecutor fans out independent tools per ReAct iteration | `app/agents/graph_orchestrator.py` `_execute` | Two tools shown in single iteration log |
+| PostgreSQL | 5-table schema + performance indexes (GIN trgm, composite), parameterised queries | `db/init/`, `app/repositories/` | `docker exec acme-postgres psql …` |
+| Redis | Two-layer cache (L1 exact + L2 pgvector), session history, rate limiter backend | `app/services/query_cache.py`, `app/services/memory_service.py` | `docker exec acme-redis redis-cli KEYS "*"` |
+| MCP server | Tool registry at `:8100/tools`; shared-secret auth | `mcp_server/server.py` | `curl http://localhost:8100/tools` |
+| Reusable Skill | Customer Escalation Skill — deterministic rubric | `app/skills/customer_escalation.py` | Skill output in response steps |
+| Autonomous agents | Health sweep (15 min), CDC escalation, churn signal; writes only to `briefings` | `app/services/autonomous_agent.py` | `GET /briefings` after sweep |
 | Docker Compose | Single `docker compose up --build` | `docker-compose.yml` | `docker compose ps` — 6 containers Up |
-| Evaluation | 10 test cases; tool_match, status_match, grounded | `evals/` | `python evals/runner.py` |
-| Observability | Structured JSON logs: tool_call, request_trace, timing | `app/observability/` | `docker compose logs -f app` |
+| Evaluation | 16 test cases × 2 paths = 32 tests; tool_match, status_match, grounded | `evals/` | `python evals/runner.py` |
+| Observability | Structured JSON logs: tool_call, request_trace, timing, trace_id | `app/observability/` | `docker compose logs -f app` |
 
 ---
 
@@ -107,7 +110,7 @@ View Redis keys: `docker exec acme-redis redis-cli KEYS "*"`
 
 **Trade-off 2 — LLM dependency with fallback**
 *Why:* Rule-based fallback ensures the demo always works.
-*Mitigation:* Fallback covers all 10 eval cases.
+*Mitigation:* Fallback covers all 16 eval cases (32 tests including both paths).
 *Talking point:* "The system is designed to degrade gracefully. If the LLM provider goes down, all functionality continues at rule-based quality."
 
 **Trade-off 3 — Redis without auth**
@@ -122,25 +125,25 @@ View Redis keys: `docker exec acme-redis redis-cli KEYS "*"`
 
 ## 7. Ten interview talking points
 
-1. **RBAC is server-side**: "Role enforcement lives in the orchestrator, not the client or LLM. Even adversarial prompts cannot bypass it — verified in eval T10."
+1. **RBAC is server-side**: "Role enforcement lives in the orchestrator's `rbac_gate` node, not the client or LLM. Even adversarial prompts cannot bypass it — the LLM chooses tools, but the gate node checks roles before any tool executes. Verified in eval T08 (403) and T10 (400)."
 
-2. **LLM as a router, not a security gate**: "The planner makes routing decisions. The orchestrator enforces policy. These are separate concerns and separate code paths."
+2. **LangGraph as an explicit state machine**: "The primary path is a 5-node LangGraph StateGraph: pre_flight → think → rbac_gate → execute → risk_assess. Every transition is logged, state is serialisable, and the graph is testable node-by-node. A hand-rolled while loop would give the same behaviour with implicit state and no standard tracing hooks."
 
-3. **Deterministic skill with documented rubric**: "The Customer Escalation Skill applies a documented, reproducible rubric — account health, severity, staleness. No LLM call inside the skill. Output is auditable and testable."
+3. **Parallel tool execution without async rewrite**: "Independent tools (get_customer_profile + get_open_issues) run in parallel via ThreadPoolExecutor. This eliminates one full LLM iteration (~400ms) per customer query without rewriting the synchronous DB layer. See `docs/design-tradeoffs.md` for the full sync vs async analysis."
 
-4. **Graceful degradation**: "If OpenAI is unavailable, the rule planner handles all supported queries. If Redis is unavailable, the only loss is session history — core functionality continues."
+4. **Deterministic skill with documented rubric**: "The Customer Escalation Skill applies a documented, reproducible rubric — account health, severity, staleness. No LLM call inside the skill. Output is auditable and testable."
 
-5. **MCP boundary is deliberate**: "Tool definitions are owned by MCP. Execution bypasses MCP in this prototype for reliability. The boundary is explicit, documented, and closeable with a one-file change."
+5. **Graceful degradation**: "If OpenAI is unavailable, the rule planner handles all supported queries. If Redis is unavailable, the only loss is session history and cache — core functionality continues. If MCP server is unavailable, all tools fall back to direct DB."
 
-6. **Parameterised SQL throughout**: "All database queries use bound parameters. User input never touches SQL string construction."
+6. **MCP boundary is deliberate**: "Tool definitions are owned by MCP. Execution bypasses MCP in this prototype for reliability. The boundary is explicit, documented, and closeable with a one-file change."
 
-7. **AI tooling used responsibly**: "I used Claude Code for scaffolding and boilerplate. I manually reviewed every security boundary, caught three AI-generated bugs, and validated every endpoint with curl before sign-off."
+7. **Parameterised SQL throughout**: "All database queries use bound parameters. User input never touches SQL string construction."
 
-8. **Eval set covers adversarial cases**: "Sixteen test cases including prompt injection (T10 → 400), unknown customer (T09), RBAC enforcement (T08), semantic search (T15), admin role (T13, T16), and multiple roles. Grounding check verifies real DB data, not just status codes."
+8. **AI tooling used responsibly**: "I used Claude Code for scaffolding and boilerplate. I manually reviewed every security boundary, caught AI-generated bugs, and validated every endpoint with curl before sign-off."
 
-9. **Redis rationale is documented**: "Session history is ephemeral and query-specific — Redis is the right store. Customer profiles are stable for 15 minutes — cache reduces latency. PostgreSQL remains the durable source of truth."
+9. **Eval set covers adversarial cases**: "16 test cases × 2 paths = 32 tests. Includes prompt injection (T10 → 400), RBAC enforcement (T08 → 403), unknown customer (T09), semantic search (T15), admin role (T13, T16), and full 4-tool flows. Grounding check verifies real DB data, not just status codes."
 
-10. **Production path is clear**: "TLS at load balancer, Redis AUTH + VPC, token introspection for revocation, OpenTelemetry for distributed tracing, rate limiting at the API gateway. None of these require architectural changes — they're configuration and infrastructure additions."
+10. **Production path is clear**: "Async SQLAlchemy when DB I/O contention appears in traces (~3–5 day refactor). Kafka/Debezium when CDC freshness SLA tightens. OpenTelemetry spans for distributed tracing. All documented in `docs/design-tradeoffs.md`."
 
 ---
 
@@ -153,5 +156,5 @@ View Redis keys: `docker exec acme-redis redis-cli KEYS "*"`
 | Redis AUTH uses plain local password | Low | Addressed locally; prod uses secrets manager + VPC |
 | Keycloak not behind TLS proxy | Low | Token issuance over plain HTTP on :8080 locally; prod: terminate at shared gateway |
 | No token revocation | Low | Short-lived tokens (5 min); add introspection in production |
-| Single-issue history (history for `issues[0]` only) | Low | Sufficient for demo; production would iterate all issues |
-| `.env` contains live API key | Medium | Never commit; use secrets manager in production |
+| CDC listener is single background thread | Low | Misses events during pod restarts; doesn't survive horizontal scaling. Production fix: Kafka/Debezium consumer groups. Documented in `docs/design-tradeoffs.md` |
+| `.env` contains live API key | Medium | Never commit; use secrets manager in production; `.env` is gitignored |
