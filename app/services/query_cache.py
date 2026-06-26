@@ -32,22 +32,22 @@ def _is_cacheable(query: str) -> bool:
     return not any(hint in q for hint in _WRITE_HINTS)
 
 
-def _exact_key(query: str, roles: list, customer: str) -> str:
-    raw = f'{query.lower().strip()}|{",".join(sorted(roles))}|{customer.lower()}'
+def _exact_key(query: str, roles: list, customer: str, username: str = '') -> str:
+    raw = f'{query.lower().strip()}|{",".join(sorted(roles))}|{customer.lower()}|{username.lower()}'
     return 'qcache:exact:' + hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
-def _scope_tag(roles: list, customer: str) -> str:
-    return f'{",".join(sorted(roles))}|{customer.lower()}'
+def _scope_tag(roles: list, customer: str, username: str = '') -> str:
+    return f'{",".join(sorted(roles))}|{customer.lower()}|{username.lower()}'
 
 
 # ── Layer 1: Redis exact cache ────────────────────────────────────────────────
 
-def get_exact_cached(query: str, roles: list, customer: str) -> Optional[dict]:
+def get_exact_cached(query: str, roles: list, customer: str, username: str = '') -> Optional[dict]:
     if not _is_cacheable(query):
         return None
     try:
-        raw = r.get(_exact_key(query, roles, customer))
+        raw = r.get(_exact_key(query, roles, customer, username))
         if raw:
             log_event('cache', {'layer': 'exact', 'hit': True, 'query': query[:60]})
             return json.loads(raw)
@@ -56,11 +56,12 @@ def get_exact_cached(query: str, roles: list, customer: str) -> Optional[dict]:
     return None
 
 
-def store_exact(query: str, roles: list, customer: str, answer: str, plan: dict) -> None:
+def store_exact(query: str, roles: list, customer: str, answer: str, plan: dict,
+                username: str = '') -> None:
     def _store():
         try:
             r.setex(
-                _exact_key(query, roles, customer),
+                _exact_key(query, roles, customer, username),
                 _EXACT_TTL,
                 json.dumps({'answer': answer, 'plan': plan}, default=str),
             )
@@ -71,7 +72,8 @@ def store_exact(query: str, roles: list, customer: str, answer: str, plan: dict)
 
 # ── Layer 2: pgvector semantic cache ─────────────────────────────────────────
 
-def get_semantic_cached(query: str, roles: list, customer: str) -> Optional[dict]:
+def get_semantic_cached(query: str, roles: list, customer: str,
+                        username: str = '') -> Optional[dict]:
     """Embed query and find a cosine-similar cached answer above threshold."""
     if not _is_cacheable(query):
         return None
@@ -84,7 +86,7 @@ def get_semantic_cached(query: str, roles: list, customer: str) -> Optional[dict
         from sqlalchemy import text
         from core.db import SessionLocal
         emb_str = '[' + ','.join(str(x) for x in emb) + ']'
-        scope = _scope_tag(roles, customer)
+        scope = _scope_tag(roles, customer, username)
 
         with SessionLocal() as db:
             row = db.execute(text('''
@@ -122,7 +124,7 @@ def get_semantic_cached(query: str, roles: list, customer: str) -> Optional[dict
 
 
 def store_semantic(query: str, roles: list, customer: str,
-                   answer: str, plan: dict) -> None:
+                   answer: str, plan: dict, username: str = '') -> None:
     """Embed query and store in query_cache table (background)."""
     def _store():
         try:
@@ -131,7 +133,7 @@ def store_semantic(query: str, roles: list, customer: str,
             if not emb:
                 return
             emb_str = '[' + ','.join(str(x) for x in emb) + ']'
-            scope = _scope_tag(roles, customer)
+            scope = _scope_tag(roles, customer, username)
             qhash = hashlib.sha256((query + scope).encode()).hexdigest()
 
             from sqlalchemy import text
@@ -163,18 +165,19 @@ def store_semantic(query: str, roles: list, customer: str,
 
 # ── Public interface used by graph_orchestrator ───────────────────────────────
 
-def lookup(query: str, roles: list, customer: str) -> Optional[dict]:
+def lookup(query: str, roles: list, customer: str, username: str = '') -> Optional[dict]:
     """Check both layers. Returns {answer, plan} or None on complete miss."""
-    hit = get_exact_cached(query, roles, customer)
+    hit = get_exact_cached(query, roles, customer, username)
     if hit:
         return hit
-    return get_semantic_cached(query, roles, customer)
+    return get_semantic_cached(query, roles, customer, username)
 
 
-def store(query: str, roles: list, customer: str, answer: str, plan: dict) -> None:
+def store(query: str, roles: list, customer: str, answer: str, plan: dict,
+          username: str = '') -> None:
     """Persist to both layers (background threads, non-blocking)."""
-    store_exact(query, roles, customer, answer, plan)
-    store_semantic(query, roles, customer, answer, plan)
+    store_exact(query, roles, customer, answer, plan, username)
+    store_semantic(query, roles, customer, answer, plan, username)
 
 
 def get_cache_stats() -> dict:

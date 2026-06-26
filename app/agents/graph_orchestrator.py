@@ -447,7 +447,10 @@ def _run_single_tool(tool: str, args: dict, state: AgentState) -> dict:
                     f"Issue access restricted: {customer_name} is assigned to "
                     f"{owner}. Your account only has read access to your own customers' issues."
                 )
-            updates['step'] = {'tool': tool, 'args': {'customer_name': customer_name}, 'output': real_issues}
+            step: dict = {'tool': tool, 'args': {'customer_name': customer_name}, 'output': real_issues}
+            if rls_restricted:
+                step['rls_note'] = updates['rls_note']
+            updates['step'] = step
 
         elif tool == 'get_issue_history':
             issues_now = state.get('issues', [])
@@ -486,7 +489,21 @@ def _run_single_tool(tool: str, args: dict, state: AgentState) -> dict:
             result = TOOL_MAP[tool](args.get('query', ''))
             updates['step'] = {'tool': tool, 'args': args, 'output': result}
             if result.get('count') == 1:
-                updates['customer_name'] = result['matches'][0]
+                resolved = result['matches'][0]
+                updates['customer_name'] = resolved
+                # In rule-based mode, queue follow-up steps so the agent doesn't stop
+                # after search. LLM path handles this via a new think iteration.
+                if state.get('plan_queue') is not None:
+                    lowered = state.get('query', '').lower()
+                    followup = [
+                        {'tool': 'get_customer_profile', 'args': {'customer_name': resolved}},
+                        {'tool': 'get_open_issues', 'args': {'customer_name': resolved}},
+                    ]
+                    if any(t in lowered for t in ['history', 'summary', 'summarise', 'summarize', 'latest', 'status', 'update']):
+                        followup.append({'tool': 'get_issue_history', 'args': {}})
+                    if any(t in lowered for t in ['suggest', 'recommend', 'next action']):
+                        followup.append({'tool': 'recommend_next_action', 'args': {}})
+                    updates['plan_queue'] = followup
 
     except Exception as exc:
         updates['step'] = {'tool': tool, 'args': args, 'output': {'error': str(exc)}}
@@ -672,7 +689,8 @@ def run_agent_stream(user_query: str, session_id: str, user_ctx: dict,
     # ── Query cache check (Layer 1 exact, Layer 2 semantic) ───────────────────
     if not confirmed_customer:  # skip cache when user already disambiguated (fresh intent)
         from services.query_cache import lookup as cache_lookup
-        cache_hit = cache_lookup(user_query, roles, confirmed_customer or '')
+        cache_hit = cache_lookup(user_query, roles, confirmed_customer or '',
+                                 username=user_ctx.get('username', ''))
         if cache_hit:
             cached_plan = cache_hit.get('plan', {})
             cached_plan['cache_hit'] = True
@@ -770,11 +788,11 @@ def run_agent_stream(user_query: str, session_id: str, user_ctx: dict,
 
     # ── Agent 3: Response — stream tokens ─────────────────────────────────────
     rls_note = accumulated.get('rls_note')
-    if rls_note:
-        rls_delta = f"⚠️ {rls_note}\n\n"
-        yield f'data: {json.dumps({"type": "token", "delta": rls_delta})}\n\n'
+    rls_prefix = f"⚠️ {rls_note}\n\n" if rls_note else ''
+    if rls_prefix:
+        yield f'data: {json.dumps({"type": "token", "delta": rls_prefix})}\n\n'
 
-    full_answer = ''
+    full_answer = rls_prefix  # include warning in full_answer from the start
     for token_event in synthesize_answer_stream(
         user_query,
         accumulated.get('steps', []),
@@ -790,9 +808,9 @@ def run_agent_stream(user_query: str, session_id: str, user_ctx: dict,
         except Exception:
             pass
 
-    if not full_answer:
+    if not full_answer or full_answer == rls_prefix:
         from agents.orchestrator import _rule_based_answer
-        full_answer = _rule_based_answer(
+        rule_answer = _rule_based_answer(
             plan_summary,
             accumulated.get('all_issues', []),
             accumulated.get('profile'),
@@ -801,6 +819,7 @@ def run_agent_stream(user_query: str, session_id: str, user_ctx: dict,
             accumulated.get('risk_output'),
             accumulated.get('next_action_result'),
         )
+        full_answer = rls_prefix + rule_answer
         yield f'data: {json.dumps({"type": "answer", "text": full_answer})}\n\n'
 
     append_session_event(session_id, {
@@ -816,7 +835,8 @@ def run_agent_stream(user_query: str, session_id: str, user_ctx: dict,
     if full_answer:
         from services.query_cache import store as cache_store
         # Use '' for customer so key matches lookup (confirmed_customer is empty at lookup time)
-        cache_store(user_query, roles, '', full_answer, plan_summary)
+        cache_store(user_query, roles, '', full_answer, plan_summary,
+                    username=user_ctx.get('username', ''))
 
         from services.persistent_memory import extract_and_store_async
         extract_and_store_async(

@@ -94,6 +94,7 @@ export interface QueryStep {
   skill?: string
   args?: Record<string, unknown>
   output: unknown
+  rls_note?: string
 }
 
 export interface QueryPlan {

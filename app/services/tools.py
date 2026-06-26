@@ -83,8 +83,12 @@ def tool_get_open_issues(customer_name: str, user_ctx: dict = None):
 
     mcp_result = _mcp_get(f'/issues/{canonical}')
     if mcp_result is not None:
-        issues = mcp_result.get('issues', [])
-        issues = _apply_rls_to_issues(issues, user_ctx)  # MCP has no RLS — filter app-side
+        raw_issues = mcp_result.get('issues', [])
+        issues = _apply_rls_to_issues(raw_issues, user_ctx)  # MCP has no RLS — filter app-side
+        # If MCP returned issues but all were filtered, generate RLS sentinel so callers
+        # can surface an explicit access warning instead of a confusing empty list.
+        if raw_issues and not issues:
+            issues = get_open_issues_for_customer(canonical, user_ctx=user_ctx)
         via = 'mcp'
     else:
         issues = get_open_issues_for_customer(canonical, user_ctx=user_ctx)

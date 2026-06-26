@@ -45,6 +45,7 @@ def run_agent(user_query: str, session_id: str, user_ctx: dict, trace_id: str = 
     issue_history = []
     next_action = None
     all_issues = []
+    search_resolved = False  # True only when search_customers resolved exactly 1 match
 
     # ── Tool Execution (orchestrator/app layer) ───────────────────────────
     # Tool calls are always dispatched here, never by LLMs directly.
@@ -56,6 +57,10 @@ def run_agent(user_query: str, session_id: str, user_ctx: dict, trace_id: str = 
             args = planned_step.get('args') or {}
             result = TOOL_MAP[tool_name](args.get('query', customer_name))
             steps.append({'tool': tool_name, 'args': args, 'output': result})
+            # If exactly 1 match found, resolve customer_name for follow-up tools below
+            if result.get('count') == 1:
+                customer_name = result['matches'][0]
+                search_resolved = True
 
         elif tool_name == 'list_all_open_issues':
             args = planned_step.get('args') or {}
@@ -116,6 +121,23 @@ def run_agent(user_query: str, session_id: str, user_ctx: dict, trace_id: str = 
             result = TOOL_MAP[tool_name](args.get('query', user_query), user_ctx=user_ctx)
             steps.append({'tool': tool_name, 'args': args, 'output': result})
 
+    # ── Post-search follow-up ─────────────────────────────────────────────
+    # When search_customers resolved exactly 1 match but no profile was fetched yet,
+    # automatically fetch profile + issues for the resolved customer.
+    if search_resolved and profile is None and not all_issues:
+        profile = TOOL_MAP['get_customer_profile'](customer_name)
+        steps.append({'tool': 'get_customer_profile', 'args': {'customer_name': customer_name}, 'output': profile})
+        raw = TOOL_MAP['get_open_issues'](customer_name, user_ctx=user_ctx)
+        rls_restricted = (len(raw) == 1 and raw[0].get('__rls_restricted__')) if raw else False
+        if rls_restricted:
+            owner = raw[0].get('account_owner', 'another account owner')
+            issues = []
+            steps.append({'tool': 'get_open_issues', 'args': {'customer_name': customer_name}, 'output': [],
+                           'rls_note': f"Issue access restricted: {customer_name} is assigned to {owner}. Your account only has read access to your own customers' issues."})
+        else:
+            issues = raw
+            steps.append({'tool': 'get_open_issues', 'args': {'customer_name': customer_name}, 'output': issues})
+
     # ── Agent 2: Risk/Action Agent (single-customer only) ─────────────────
     # Runs when we have grounded customer data. Produces deterministic risk
     # assessment and explicit primary-issue selection. Does not write.
@@ -139,6 +161,11 @@ def run_agent(user_query: str, session_id: str, user_ctx: dict, trace_id: str = 
 
     if not final:
         final = _rule_based_answer(plan, all_issues, profile, issues, issue_history, risk_action_output, next_action)
+
+    # Prepend RLS access warning to the answer so users see it regardless of synthesizer path
+    rls_note = next((s['rls_note'] for s in steps if s.get('rls_note')), None)
+    if rls_note:
+        final = f"⚠️ {rls_note}\n\n{final}"
 
     event = {
         'query': user_query,

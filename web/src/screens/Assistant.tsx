@@ -297,6 +297,19 @@ function AnswerCard({ msg }: { msg: ChatMessage }) {
 
   const profileStep = r.steps.find(s => s.tool === 'get_customer_profile')
   const profile = profileStep?.output as Record<string, unknown> | undefined
+  const rlsNote = r.steps.find(s => s.rls_note)?.rls_note
+    ?? (r.answer?.startsWith('⚠️') ? r.answer.split('\n\n')[0].replace(/^⚠️\s*/, '') : null)
+
+  if (rlsNote) {
+    return (
+      <div style={{ background: '#fff', border: '1px solid #E6E6EC', borderRadius: 15, padding: '18px 20px' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '12px 14px', background: '#FFF8E6', border: '1px solid #F0D080', borderRadius: 10 }}>
+          <span style={{ fontSize: 16, flexShrink: 0 }}>⚠️</span>
+          <span style={{ fontSize: 13.5, color: '#7A5A00', lineHeight: 1.55 }}>{rlsNote}</span>
+        </div>
+      </div>
+    )
+  }
 
   // Derive customer identity from whichever source is available
   const customerName = String(

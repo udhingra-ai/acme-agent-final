@@ -1,6 +1,9 @@
 # Claude Code internal config (not project source)
 .claude/
 
+# Local Claude memory — machine-specific, never commit
+memory/
+
 # Environment
 .env
 *.env.local

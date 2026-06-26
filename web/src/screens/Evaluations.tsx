@@ -35,7 +35,10 @@ export default function Evaluations() {
         setSummary(d.summary?.total_tests != null ? d.summary : null)
         setResults(d.results ?? [])
       })
-      .catch(() => {}) // no cached results yet — that's fine
+      .catch(err => {
+        // Surface the error so it's visible — previously was swallowed silently
+        setError(`Could not load results: ${err?.message || String(err)}`)
+      })
       .finally(() => setLoading(false))
   }, [])
 

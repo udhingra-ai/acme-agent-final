@@ -144,6 +144,26 @@ def _is_semantic_query(query: str) -> bool:
     return any(kw in lowered for kw in _SEMANTIC_SEARCH_KEYWORDS)
 
 
+_CI_NAME_PATTERN = r'[a-zA-Z][A-Za-z0-9&\'-]*(?:\s+[a-zA-Z][A-Za-z0-9&\'-]*)*'
+_CI_PREP_RE = re.compile(
+    r'\b(?:for|on|about|regarding|customer|client|of|at)\s+(' + _CI_NAME_PATTERN + r')',
+    re.IGNORECASE,
+)
+_CI_STOP_WORDS = {'all', 'every', 'any', 'each', 'my', 'the', 'our', 'your', 'this', 'that',
+                  'risk', 'me', 'open', 'issues', 'customers', 'accounts', 'clients'}
+
+
+def _infer_customer_name_ci(query: str) -> str:
+    """Case-insensitive fallback — extracts a potential company name fragment after a preposition."""
+    m = _CI_PREP_RE.search(query)
+    if not m:
+        return ''
+    fragment = m.group(1).strip().rstrip('?.!,')
+    if fragment.lower() in _CI_STOP_WORDS or len(fragment) < 3:
+        return ''
+    return fragment
+
+
 def build_rule_plan(user_query: str, user_roles: List[str]) -> Dict[str, Any]:
     lowered = user_query.lower()
     customer_name = infer_customer_name(user_query)
@@ -159,7 +179,7 @@ def build_rule_plan(user_query: str, user_roles: List[str]) -> Dict[str, Any]:
             'roles_seen': user_roles,
         }
 
-    if _is_cross_customer(user_query) or not customer_name:
+    if _is_cross_customer(user_query):
         severity = _infer_severity(user_query)
         statuses = _infer_statuses(user_query)
         args: dict = {}
@@ -169,7 +189,28 @@ def build_rule_plan(user_query: str, user_roles: List[str]) -> Dict[str, Any]:
             args['statuses'] = statuses
         return {
             'customer_name': '',
-            'reasoning': 'Cross-customer or no-customer query — listing issues across all clients.',
+            'reasoning': 'Cross-customer query — listing issues across all clients.',
+            'steps': [{'tool': 'list_all_open_issues', 'args': args}],
+            'available_tools': TOOL_DESCRIPTIONS,
+            'planner_mode': 'rule_fallback',
+            'roles_seen': user_roles,
+        }
+
+    # Case-sensitive pattern didn't find a name — try case-insensitive extraction
+    if not customer_name:
+        customer_name = _infer_customer_name_ci(user_query)
+
+    if not customer_name:
+        severity = _infer_severity(user_query)
+        statuses = _infer_statuses(user_query)
+        args: dict = {}
+        if severity:
+            args['severity'] = severity
+        if statuses:
+            args['statuses'] = statuses
+        return {
+            'customer_name': '',
+            'reasoning': 'No customer name found — listing issues across all clients.',
             'steps': [{'tool': 'list_all_open_issues', 'args': args}],
             'available_tools': TOOL_DESCRIPTIONS,
             'planner_mode': 'rule_fallback',
