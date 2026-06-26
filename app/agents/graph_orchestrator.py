@@ -78,6 +78,7 @@ class AgentState(TypedDict):
     next_tool_args: dict
     next_tools: List[dict]           # parallel tool list: [{"tool": ..., "args": {...}}] (LLM path)
     rbac_error: Optional[str]
+    rls_note: Optional[str]
     risk_output: Optional[dict]
     plan_queue: Optional[List[dict]] # rule-fallback: pre-computed steps to pop from (None = not yet built)
     planner_mode: str
@@ -432,8 +433,19 @@ def _run_single_tool(tool: str, args: dict, state: AgentState) -> dict:
 
         elif tool == 'get_open_issues':
             result = TOOL_MAP[tool](customer_name, user_ctx=user_ctx)
-            updates['issues'] = result
-            updates['step'] = {'tool': tool, 'args': {'customer_name': customer_name}, 'output': result}
+            # Detect RLS restriction sentinel — strip before storing as real issues
+            rls_restricted = (
+                len(result) == 1 and result[0].get('__rls_restricted__')
+            ) if result else False
+            real_issues = [] if rls_restricted else result
+            updates['issues'] = real_issues
+            if rls_restricted:
+                owner = result[0].get('account_owner', 'another account owner')
+                updates['rls_note'] = (
+                    f"Issue access restricted: {customer_name} is assigned to "
+                    f"{owner}. Your account only has read access to your own customers' issues."
+                )
+            updates['step'] = {'tool': tool, 'args': {'customer_name': customer_name}, 'output': real_issues}
 
         elif tool == 'get_issue_history':
             issues_now = state.get('issues', [])
@@ -683,6 +695,7 @@ def run_agent_stream(user_query: str, session_id: str, user_ctx: dict,
         'next_tool_args': {},
         'next_tools': [],
         'rbac_error': None,
+        'rls_note': None,
         'risk_output': None,
         'plan_queue': None,
         'planner_mode': 'react_llm',
@@ -751,6 +764,11 @@ def run_agent_stream(user_query: str, session_id: str, user_ctx: dict,
     yield f'data: {json.dumps({"type": "planning", "plan": plan_summary, "trace_id": trace_id}, default=str)}\n\n'
 
     # ── Agent 3: Response — stream tokens ─────────────────────────────────────
+    rls_note = accumulated.get('rls_note')
+    if rls_note:
+        rls_delta = f"⚠️ {rls_note}\n\n"
+        yield f'data: {json.dumps({"type": "token", "delta": rls_delta})}\n\n'
+
     full_answer = ''
     for token_event in synthesize_answer_stream(
         user_query,

@@ -91,7 +91,20 @@ def get_open_issues_for_customer(customer_name: str, user_ctx: dict = None):
     '''
     with SessionLocal() as db:
         rows = db.execute(text(sql), params).mappings().all()
-        return [dict(r) for r in rows]
+        issues = [dict(r) for r in rows]
+
+    # If RLS filtered to 0 results, check whether the customer exists under
+    # a different owner so the caller can surface an explicit access notice.
+    if apply_rls and not issues:
+        with SessionLocal() as db:
+            row = db.execute(
+                text('SELECT account_owner FROM customers WHERE LOWER(name)=LOWER(:name)'),
+                {'name': customer_name},
+            ).mappings().first()
+        if row and row['account_owner'] and row['account_owner'] != owner:
+            return [{'__rls_restricted__': True, 'account_owner': row['account_owner']}]
+
+    return issues
 
 
 def get_issue_by_id(issue_id: int) -> dict | None:

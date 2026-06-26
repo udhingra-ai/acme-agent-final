@@ -5,9 +5,10 @@ import { avatarMeta } from '../utils'
 import type { Role } from '../types'
 
 const DEMO_USERS = [
-  { username: 'alice.sales',  displayName: 'Alice Sales',  first: 'Alice', initials: 'AS', role: 'sales_user'  as Role },
-  { username: 'bob.support',  displayName: 'Bob Support',  first: 'Bob',   initials: 'BS', role: 'support_user' as Role },
-  { username: 'carol.admin',  displayName: 'Carol Admin',  first: 'Carol', initials: 'CA', role: 'admin'        as Role },
+  { username: 'alice.sales',     displayName: 'Alice Sales',     first: 'Alice', initials: 'AS', role: 'sales_user'  as Role },
+  { username: 'james.whitfield', displayName: 'James Whitfield', first: 'James', initials: 'JW', role: 'sales_user'  as Role },
+  { username: 'bob.support',     displayName: 'Bob Support',     first: 'Bob',   initials: 'BS', role: 'support_user' as Role },
+  { username: 'carol.admin',     displayName: 'Carol Admin',     first: 'Carol', initials: 'CA', role: 'admin'        as Role },
 ]
 
 function decodeJwt(token: string): Record<string, unknown> | null {

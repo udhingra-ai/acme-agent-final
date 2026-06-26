@@ -64,8 +64,16 @@ def run_agent(user_query: str, session_id: str, user_ctx: dict, trace_id: str = 
             steps.append({'tool': tool_name, 'args': {'customer_name': customer_name}, 'output': profile})
 
         elif tool_name == 'get_open_issues':
-            issues = TOOL_MAP[tool_name](customer_name, user_ctx=user_ctx)
-            steps.append({'tool': tool_name, 'args': {'customer_name': customer_name}, 'output': issues})
+            raw = TOOL_MAP[tool_name](customer_name, user_ctx=user_ctx)
+            rls_restricted = (len(raw) == 1 and raw[0].get('__rls_restricted__')) if raw else False
+            if rls_restricted:
+                owner = raw[0].get('account_owner', 'another account owner')
+                issues = []
+                steps.append({'tool': tool_name, 'args': {'customer_name': customer_name}, 'output': [],
+                               'rls_note': f"Issue access restricted: {customer_name} is assigned to {owner}. Your account only has read access to your own customers' issues."})
+            else:
+                issues = raw
+                steps.append({'tool': tool_name, 'args': {'customer_name': customer_name}, 'output': issues})
 
         elif tool_name == 'get_issue_history':
             if not issues:
