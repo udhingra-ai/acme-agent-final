@@ -531,6 +531,7 @@ def _execute(state: AgentState) -> dict:
     new_next_action = state.get('next_action_result')
     new_all_issues = list(state.get('all_issues', []))
     customer_name = state.get('customer_name', '')
+    new_rls_note = state.get('rls_note')
 
     for r in results:
         if r.get('step'):
@@ -542,12 +543,13 @@ def _execute(state: AgentState) -> dict:
                 'via': 'graph_orchestrator',
                 'parallel': len(tools) > 1,
             })
-        if 'profile' in r:         new_profile = r['profile']
-        if 'issues' in r:          new_issues = r['issues']
-        if 'issue_history' in r:   new_history = r['issue_history']
+        if 'profile' in r:            new_profile = r['profile']
+        if 'issues' in r:             new_issues = r['issues']
+        if 'issue_history' in r:      new_history = r['issue_history']
         if 'next_action_result' in r: new_next_action = r['next_action_result']
-        if 'all_issues' in r:      new_all_issues = r['all_issues']
-        if 'customer_name' in r:   customer_name = r['customer_name']
+        if 'all_issues' in r:         new_all_issues = r['all_issues']
+        if 'customer_name' in r:      customer_name = r['customer_name']
+        if 'rls_note' in r:           new_rls_note = r['rls_note']
 
     return {
         'steps': new_steps,
@@ -557,6 +559,7 @@ def _execute(state: AgentState) -> dict:
         'next_action_result': new_next_action,
         'all_issues': new_all_issues,
         'customer_name': customer_name,
+        'rls_note': new_rls_note,
     }
 
 
