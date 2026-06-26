@@ -4,6 +4,10 @@
 # Local Claude memory — machine-specific, never commit
 memory/
 
+# Local-only docs — demo script and interview evidence stay off GitHub
+docs/DEMO_SCRIPT.md
+docs/INTERVIEW_EVIDENCE.md
+
 # Environment
 .env
 *.env.local
