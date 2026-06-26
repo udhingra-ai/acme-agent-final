@@ -176,6 +176,19 @@ def build_rule_plan(user_query: str, user_roles: List[str]) -> Dict[str, Any]:
             'roles_seen': user_roles,
         }
 
+    # Verify the inferred name exists in the DB — if not, search first
+    from repositories.customer_repo import find_customer_matches
+    db_matches, exact = find_customer_matches(customer_name)
+    if not db_matches:
+        return {
+            'customer_name': customer_name,
+            'reasoning': f'Name "{customer_name}" not found in DB — routing to search_customers.',
+            'steps': [{'tool': 'search_customers', 'args': {'query': customer_name}}],
+            'available_tools': TOOL_DESCRIPTIONS,
+            'planner_mode': 'rule_fallback',
+            'roles_seen': user_roles,
+        }
+
     steps = [{'tool': 'get_customer_profile', 'args': {'customer_name': customer_name}}]
     if any(t in lowered for t in ['issue', 'status', 'summary', 'summarise', 'summarize', 'next action', 'open', 'progress', 'history']):
         steps.append({'tool': 'get_open_issues', 'args': {'customer_name': customer_name}})

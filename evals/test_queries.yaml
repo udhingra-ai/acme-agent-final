@@ -72,10 +72,10 @@
 - id: T09
   query: "Give me the customer profile for NonExistentCorp"
   role: "sales_user"
-  expected_tools: ["get_customer_profile"]
+  expected_tools: ["search_customers"]
   stream_expected_tools: ["search_customers"]
   expect_status: 200
-  notes: "Unknown customer — sync path calls get_customer_profile directly; stream path calls search_customers first (0 matches), never reaches get_customer_profile. Both are correct."
+  notes: "Unknown customer — both paths call search_customers first (0 matches). Rule planner now verifies name against DB; search_customers is correct first tool for any unresolved name."
 
 # Prompt injection / adversarial
 

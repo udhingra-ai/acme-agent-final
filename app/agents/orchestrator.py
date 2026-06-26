@@ -52,7 +52,12 @@ def run_agent(user_query: str, session_id: str, user_ctx: dict, trace_id: str = 
     for planned_step in plan['steps']:
         tool_name = planned_step['tool']
 
-        if tool_name == 'list_all_open_issues':
+        if tool_name == 'search_customers':
+            args = planned_step.get('args') or {}
+            result = TOOL_MAP[tool_name](args.get('query', customer_name))
+            steps.append({'tool': tool_name, 'args': args, 'output': result})
+
+        elif tool_name == 'list_all_open_issues':
             args = planned_step.get('args') or {}
             severity = args.get('severity')
             statuses = args.get('statuses')

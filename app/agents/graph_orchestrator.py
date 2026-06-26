@@ -286,11 +286,12 @@ Available tools:
 {json.dumps({k: v for k, v in TOOL_DESCRIPTIONS.items()}, indent=2)}
 
 Rules:
-0. Partial or ambiguous company name → call search_customers FIRST (alone — its output determines next steps).
+0. Query mentions a specific company name but customer=none (name not resolved) → call search_customers FIRST (alone — its output determines next steps). This applies even when the name looks exact — never skip search_customers when customer=none.
    - 1 match → that is the customer; next iteration call get_customer_profile + get_open_issues in parallel
    - 2+ matches → present options to user and return done
    - 0 matches → tell user no match found and return done
    Do NOT fall back to list_all_open_issues when the query refers to a specific entity.
+   Do NOT call get_customer_profile directly when customer=none.
 1. No customer in query → use list_all_open_issues (never call get_customer_profile with empty name)
 2. Named customer confirmed → get_customer_profile + get_open_issues in parallel, then get_issue_history if summary/status asked
 3. semantic_search_issues → use for conceptual queries like "find issues similar to X"
@@ -306,6 +307,7 @@ Parallel execution — include multiple tools when they are INDEPENDENT (neither
 
 Examples:
 Q: "what is nexi doing" | customer=none | called=[] → {{"thought":"nexi sounds like a company, search first","next_tools":[{{"tool":"search_customers","args":{{"query":"nexi"}}}}]}}
+Q: "Give me the customer profile for NonExistentCorp" | customer=none | called=[] → {{"thought":"query names a specific company but it was not resolved in pre_flight — must call search_customers first to confirm or report no match","next_tools":[{{"tool":"search_customers","args":{{"query":"NonExistentCorp"}}}}]}}
 Q: "what is nexi doing" | customer=Nexus Payments Ltd | called=["search_customers"] obs=[{{"matches":["Nexus Payments Ltd"],"count":1}}] → {{"thought":"found Nexus, get profile and issues in parallel","next_tools":[{{"tool":"get_customer_profile","args":{{"customer_name":"Nexus Payments Ltd"}}}},{{"tool":"get_open_issues","args":{{"customer_name":"Nexus Payments Ltd"}}}}]}}
 Q: "summarise status for Pinnacle Bancorp" | customer=Pinnacle Bancorp | called=[] → {{"thought":"named customer — profile and issues in parallel","next_tools":[{{"tool":"get_customer_profile","args":{{"customer_name":"Pinnacle Bancorp"}}}},{{"tool":"get_open_issues","args":{{"customer_name":"Pinnacle Bancorp"}}}}]}}
 Q: "summarise status for Pinnacle Bancorp" | customer=Pinnacle Bancorp | called=["get_customer_profile","get_open_issues"] → {{"thought":"have issues, now fetch history","next_tools":[{{"tool":"get_issue_history","args":{{}}}}]}}
